@@ -3,3 +3,23 @@
 #EXTVLCOPT:http-referrer=https://www.atomsportv485.top
 #EXTVLCOPT:http-user-agent=Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36
 https://hls.imrantoy7384.workers.dev/https://corestream.ronaldovurdu.help//hls/bein-sports-1.m3u8
+#EXTINF:-1 tvg-id="bein-sports-2" group-title="TV Channels",beIN Sports 2
+#EXTVLCOPT:http-referrer=https://www.atomsportv485.top
+#EXTVLCOPT:http-user-agent=Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36
+https://hls.imrantoy7384.workers.dev/https://corestream.ronaldovurdu.help//hls/bein-sports-2.m3u8
+#EXTINF:-1 tvg-id="bein-sports-3" group-title="TV Channels",beIN Sports 3
+#EXTVLCOPT:http-referrer=https://www.atomsportv485.top
+#EXTVLCOPT:http-user-agent=Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36
+https://hls.imrantoy7384.workers.dev/https://corestream.ronaldovurdu.help//hls/bein-sports-3.m3u8
+#EXTINF:-1 tvg-id="bein-sports-4" group-title="TV Channels",beIN Sports 4
+#EXTVLCOPT:http-referrer=https://www.atomsportv485.top
+#EXTVLCOPT:http-user-agent=Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36
+https://hls.imrantoy7384.workers.dev/https://corestream.ronaldovurdu.help//hls/bein-sports-4.m3u8
+#EXTINF:-1 tvg-id="s-sport" group-title="TV Channels",S Sport 1
+#EXTVLCOPT:http-referrer=https://www.atomsportv485.top
+#EXTVLCOPT:http-user-agent=Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36
+https://hls.imrantoy7384.workers.dev/https://corestream.ronaldovurdu.help//hls/s-sport.m3u8
+#EXTINF:-1 tvg-id="s-sport-2" group-title="TV Channels",S Sport 2
+#EXTVLCOPT:http-referrer=https://www.atomsportv485.top
+#EXTVLCOPT:http-user-agent=Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Mobile Safari/537.36
+https://hls.imrantoy7384.workers.dev/https://corestream.ronaldovurdu.help//hls/s-sport-2.m3u8
