@@ -8,10 +8,10 @@ import signal
 
 # ===================== AYARLAR =====================
 RTMP_URL   = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = "cine10"
-VIDEO_URL  = "https://catcast.ismailturret.workers.dev/playercinema-premium4.m3u8"
-LOGO_URL   = "https://i.hizliresim.com/rssomxo.png"
-ALT_YAZI   = "t.me/digitaltivi"
+STREAM_KEY = "telegram"
+VIDEO_URL  = "https://cdn.codenet.lol/streamgo/stremgo123/4864.m3u8"
+LOGO_URL   = "https://raw.githubusercontent.com/mutlumedya/cine/refs/heads/main/telegram.png"
+ALT_YAZI   = "Resmi Telegram Yayını"
 
 rtmp_server = f"{RTMP_URL}/{STREAM_KEY}"
 
@@ -39,9 +39,9 @@ command = [
     "[0:v]scale=1280:720:force_original_aspect_ratio=decrease,"
     "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black[v0];"
     "[1:v]scale=-1:90[logo];"
-    "[v0][logo]overlay=10:10[v1];"
+    "[v0][logo]overlay=W-w-10:10[v1];"
     f"[v1]drawtext=text='{ALT_YAZI}':fontcolor=white:fontsize=24:"
-    "box=1:boxcolor=black@0.6:boxborderw=5:x=(w-text_w)/2:y=h-text_h-20[v]",
+    "x=(w-text_w)/2:y=h-text_h-20[v]",
     "-map", "[v]",
     "-map", "0:a?",
     "-c:v", "libx264",
@@ -61,7 +61,6 @@ proc = None
 
 def baslat():
     global proc
-    # CREATE_NEW_PROCESS_GROUP: Ctrl+C'yi ffmpeg'e iletmesin
     creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     proc = subprocess.Popen(command, creationflags=creationflags)
     return proc
@@ -72,7 +71,6 @@ def durdur():
     if proc and proc.poll() is None:
         print("\n Yayin durduruluyor...")
         try:
-            # Windows'ta nazikçe durdur
             if os.name == "nt":
                 subprocess.call(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
                                 stdout=subprocess.DEVNULL,
@@ -87,7 +85,6 @@ def durdur():
 if __name__ == "__main__":
     try:
         baslat()
-        # Yayını canlı tut
         while True:
             time.sleep(30)
             if proc.poll() is not None:
