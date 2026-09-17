@@ -1,44 +1,99 @@
-@echo off
-title SSH101 Yayin
-cd /d "%~dp0"
+# ssh101_yayin.py
+# Windows VPS için SSH101 yayın scripti
+import subprocess
+import sys
+import time
+import os
+import signal
 
-echo ========================================
-echo  SSH101 Yayin Baslatiliyor
-echo ========================================
-echo.
+# ===================== AYARLAR =====================
+RTMP_URL   = "rtmp://ssh101.bozztv.com:1935/ssh101"
+STREAM_KEY = "cine10"
+VIDEO_URL  = "https://catcast.ismailturret.workers.dev/playercinema-premium4.m3u8"
+LOGO_URL   = "https://i.hizliresim.com/rssomxo.png"
+ALT_YAZI   = "t.me/digitaltivi"
 
-REM FFmpeg kontrolu
-where ffmpeg >nul 2>&1
-if errorlevel 1 (
-    echo HATA: FFmpeg kurulu degil veya PATH'te yok!
-    echo.
-    echo Cozum:
-    echo   1^) winget install Gyan.FFmpeg
-    echo   2^) veya https://www.gyan.dev/ffmpeg/builds/ indir
-    echo   3^) C:\ffmpeg\bin klasorunu PATH'e ekle
-    echo.
-    pause
-    exit /b 1
-)
+rtmp_server = f"{RTMP_URL}/{STREAM_KEY}"
 
-echo FFmpeg bulundu.
-echo.
+print("=" * 55)
+print(" SSH101.com Yayin Baslatiliyor (Windows)")
+print("=" * 55)
+print(f" Video      : {VIDEO_URL}")
+print(f" Logo       : {LOGO_URL}")
+print(f" Stream Key : {STREAM_KEY}")
+print(f" RTMP       : {rtmp_server}")
+print(f" Izleme     : https://ssh101.com/live/{STREAM_KEY}")
+print(f" HLS        : https://lbgo.bozztv.com/ssh101/ssh101/{STREAM_KEY}/playlist.m3u8")
+print("=" * 55)
 
-REM Python kontrolu
-where python >nul 2>&1
-if errorlevel 1 (
-    echo HATA: Python kurulu degil!
-    pause
-    exit /b 1
-)
+# FFmpeg yolunu bul
+FFMPEG = "ffmpeg"  # PATH'te ise
 
-echo Python bulundu.
-echo.
-echo Yayin baslatiliyor...
-echo.
+command = [
+    FFMPEG,
+    "-re",
+    "-stream_loop", "-1",
+    "-i", VIDEO_URL,
+    "-i", LOGO_URL,
+    "-filter_complex",
+    "[0:v]scale=1280:720:force_original_aspect_ratio=decrease,"
+    "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black[v0];"
+    "[1:v]scale=-1:90[logo];"
+    "[v0][logo]overlay=10:10[v1];"
+    f"[v1]drawtext=text='{ALT_YAZI}':fontcolor=white:fontsize=24:"
+    "box=1:boxcolor=black@0.6:boxborderw=5:x=(w-text_w)/2:y=h-text_h-20[v]",
+    "-map", "[v]",
+    "-map", "0:a?",
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-b:v", "4000k",
+    "-c:a", "aac",
+    "-b:a", "128k",
+    "-f", "flv",
+    rtmp_server
+]
 
-python yayin.py
+print("\n Yayin baslatiliyor...")
+print(" Logo: Sag ust | Alt yazi: " + ALT_YAZI)
+print(" Durdurmak icin: Ctrl + C\n")
 
-echo.
-echo Yayin kapatildi.
-pause
+proc = None
+
+def baslat():
+    global proc
+    # CREATE_NEW_PROCESS_GROUP: Ctrl+C'yi ffmpeg'e iletmesin
+    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    proc = subprocess.Popen(command, creationflags=creationflags)
+    return proc
+
+
+def durdur():
+    global proc
+    if proc and proc.poll() is None:
+        print("\n Yayin durduruluyor...")
+        try:
+            # Windows'ta nazikçe durdur
+            if os.name == "nt":
+                subprocess.call(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+            else:
+                proc.terminate()
+        except Exception as e:
+            print(" Durdurma hatasi:", e)
+        print(" Yayin sonlandirildi.")
+
+
+if __name__ == "__main__":
+    try:
+        baslat()
+        # Yayını canlı tut
+        while True:
+            time.sleep(30)
+            if proc.poll() is not None:
+                print(" Yayin durdu, 5 sn sonra yeniden baslatiliyor...")
+                time.sleep(5)
+                baslat()
+    except KeyboardInterrupt:
+        durdur()
+        sys.exit(0)
