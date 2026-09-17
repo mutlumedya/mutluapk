@@ -1,5 +1,5 @@
 # ssh101_yayin.py
-# Windows VPS için SSH101 yayın scripti (sağlam versiyon)
+# Windows VPS için SSH101 yayın scripti (düzeltilmiş)
 import subprocess
 import sys
 import time
@@ -12,9 +12,11 @@ VIDEO_URL  = "https://cdn.codenet.lol/streamgo/stremgo123/4864.m3u8"
 LOGO_URL   = "https://raw.githubusercontent.com/mutlumedya/cine/refs/heads/main/telegram.png"
 ALT_YAZI   = "Resmi Telegram Yayını"
 
-# Kaynak yayın için header'lar (403 için gerekli olabilir)
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
 VIDEO_REFERER = "https://codenet.lol/"
-USER_AGENT    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+
+# Windows font yolu (fontconfig bypass)
+FONT_FILE = "C\\:/Windows/Fonts/arial.ttf"
 
 rtmp_server = f"{RTMP_URL}/{STREAM_KEY}"
 LOG_FILE    = "yayin.log"
@@ -27,8 +29,6 @@ print(f" Logo       : {LOGO_URL}")
 print(f" Stream Key : {STREAM_KEY}")
 print(f" RTMP       : {rtmp_server}")
 print(f" Izleme     : https://ssh101.com/live/{STREAM_KEY}")
-print(f" HLS        : https://lbgo.bozztv.com/ssh101/ssh101/{STREAM_KEY}/playlist.m3u8")
-print(f" Log        : {LOG_FILE}")
 print("=" * 55)
 
 FFMPEG = "ffmpeg"
@@ -38,23 +38,25 @@ command = [
     "-hide_banner",
     "-loglevel", "warning",
 
-    # Kaynak video için headers (403 için)
+    # --- m3u8 için segment uzantı izinleri ---
+    "-allowed_extensions", "ALL",
+    "-extension_picky", "0",
+    "-protocol_whitelist", "file,http,https,tcp,tls,crypto",
+
+    # --- Kaynak video headers ---
     "-headers",
     f"Referer: {VIDEO_REFERER}\r\nUser-Agent: {USER_AGENT}\r\n",
 
-    # Reconnect ayarları (ağ kopunca yeniden bağlan)
+    # --- Reconnect ---
     "-reconnect", "1",
     "-reconnect_streamed", "1",
     "-reconnect_delay_max", "5",
-
-    # m3u8'lerde tüm segment uzantılarına izin ver
-    "-allowed_extensions", "ALL",
 
     "-re",
     "-stream_loop", "-1",
     "-i", VIDEO_URL,
 
-    # Logo için headers
+    # --- Logo ---
     "-headers", f"User-Agent: {USER_AGENT}\r\n",
     "-i", LOGO_URL,
 
@@ -63,7 +65,7 @@ command = [
     "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black[v0];"
     "[1:v]scale=-1:90[logo];"
     "[v0][logo]overlay=W-w-10:10[v1];"
-    f"[v1]drawtext=text='{ALT_YAZI}':fontcolor=white:fontsize=24:"
+    f"[v1]drawtext=fontfile='{FONT_FILE}':text='{ALT_YAZI}':fontcolor=white:fontsize=24:"
     "x=(w-text_w)/2:y=h-text_h-20[v]",
 
     "-map", "[v]",
@@ -83,7 +85,6 @@ command = [
 ]
 
 print("\n Yayin baslatiliyor...")
-print(" Logo: Sag ust | Alt yazi: " + ALT_YAZI)
 print(" Durdurmak icin: Ctrl + C\n")
 
 proc = None
@@ -92,7 +93,6 @@ log_fp = None
 
 def baslat():
     global proc, log_fp
-    # ffmpeg çıktısını log dosyasına yaz (sorun görürsün)
     log_fp = open(LOG_FILE, "ab")
     creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     proc = subprocess.Popen(
