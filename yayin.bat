@@ -23,7 +23,7 @@ from pathlib import Path
 # ============================================================
 
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = "telegram"
+STREAM_KEY = "zemtvhaber"
 
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
