@@ -1,1016 +1,593 @@
-# ============================================================
-# ZEM TV HABER - OTOMATİK 7/24 HABER YAYINI
-# ============================================================
-# Windows Server / VDS
-# Python 3.10+
-#
-# Özellikler:
-# - Türkçe AI spiker
-# - Otomatik RSS haber toplama
-# - RSS kaynakları paralel kontrol edilir
-# - Bir RSS çökerse diğerleri çalışmaya devam eder
-# - Konya hava durumu
-# - USD / EUR / Gram Altın / Çeyrek Altın
-# - ZEM TV logo
-# - Haber kaynağı ekranda görünür
-# - FFmpeg ile RTMP yayını
-# - SSH101 RTMP
-# - Pillow YOK
-# - Gerekli Python paketi otomatik kurulur
-# ============================================================
-
 import os
 import sys
-import time
-import json
-import html
 import re
 import ssl
-import urllib.request
-import urllib.parse
+import html
+import json
+import time
+import shutil
+import asyncio
 import subprocess
 import threading
+import urllib.request
+import urllib.parse
 import xml.etree.ElementTree as ET
-
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-
-# ============================================================
-# AYARLAR
-# ============================================================
-
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101/zentvhaber"
-
 FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"
 
-LOGO_URL = (
-    "https://raw.githubusercontent.com/"
-    "mutlumedya/cine/refs/heads/main/telegram.png"
-)
-
+LOGO_URL = "https://raw.githubusercontent.com/mutlumedya/cine/refs/heads/main/telegram.png"
 LOGO_FILE = "zemtv_logo.png"
-SES_DOSYASI = "zemtv_spiker.mp3"
 
-FONT_FILE = r"C:\Windows\Fonts\arial.ttf"
+VOICE_FILE = "zemtv_voice.mp3"
+MEDIA_FILE = "zemtv_media.mp4"
+IMAGE_FILE = "zemtv_image.jpg"
 
-HAVA_SEHRI = "Konya"
+CITY = "Konya"
 
-# Haber kontrol aralığı
-HABER_KONTROL_SURESI = 300
-
-# Her haber yaklaşık kaç saniye ekranda kalacak
-HABER_SURESI = 40
-
-# Haber açıklaması maksimum uzunluğu
-MAX_ACIKLAMA = 650
-
-# Video
 WIDTH = 1280
 HEIGHT = 720
 FPS = 25
 
-# RSS bağlantısı için maksimum bekleme
-RSS_TIMEOUT = 5
+NEWS_DURATION = 45
+RSS_TIMEOUT = 6
+RSS_REFRESH = 180
 
-# Aynı anda kaç RSS kontrol edilsin
-RSS_WORKERS = 10
-
-
-# ============================================================
-# RSS KAYNAKLARI
-# ============================================================
-
-RSS_KAYNAKLARI = [
-
-    # -----------------------------
-    # HABERTÜRK
-    # -----------------------------
-
-    (
-        "HABERTÜRK",
-        "https://www.haberturk.com/rss"
-    ),
-
-    (
-        "HABERTÜRK MANŞET",
-        "https://www.haberturk.com/rss/manset.xml"
-    ),
-
-    (
-        "HABERTÜRK GÜNDEM",
-        "https://www.haberturk.com/rss/kategori/gundem.xml"
-    ),
-
-    (
-        "HABERTÜRK EKONOMİ",
-        "https://www.haberturk.com/rss/ekonomi.xml"
-    ),
-
-    (
-        "HABERTÜRK DÜNYA",
-        "https://www.haberturk.com/rss/kategori/dunya.xml"
-    ),
-
-    (
-        "HABERTÜRK TEKNOLOJİ",
-        "https://www.haberturk.com/rss/kategori/teknoloji.xml"
-    ),
-
-
-    # -----------------------------
-    # TRT HABER
-    # -----------------------------
-
-    (
-        "TRT HABER",
-        "https://www.trthaber.com/manset_articles.rss"
-    ),
-
-    (
-        "TRT HABER SON DAKİKA",
-        "https://www.trthaber.com/sondakika_articles.rss"
-    ),
-
-    (
-        "TRT HABER GÜNDEM",
-        "https://www.trthaber.com/gundem_articles.rss"
-    ),
-
-    (
-        "TRT HABER TÜRKİYE",
-        "https://www.trthaber.com/turkiye_articles.rss"
-    ),
-
-    (
-        "TRT HABER DÜNYA",
-        "https://www.trthaber.com/dunya_articles.rss"
-    ),
-
-    (
-        "TRT HABER EKONOMİ",
-        "https://www.trthaber.com/ekonomi_articles.rss"
-    ),
-
-    (
-        "TRT HABER SPOR",
-        "https://www.trthaber.com/spor_articles.rss"
-    ),
-
-    (
-        "TRT HABER YAŞAM",
-        "https://www.trthaber.com/yasam_articles.rss"
-    ),
-
-    (
-        "TRT HABER SAĞLIK",
-        "https://www.trthaber.com/saglik_articles.rss"
-    ),
-
-    (
-        "TRT HABER KÜLTÜR SANAT",
-        "https://www.trthaber.com/kultur_sanat_articles.rss"
-    ),
-
-    (
-        "TRT HABER BİLİM TEKNOLOJİ",
-        "https://www.trthaber.com/bilim_teknoloji_articles.rss"
-    ),
-
-
-    # -----------------------------
-    # NTV
-    # -----------------------------
-
-    (
-        "NTV",
-        "https://www.ntv.com.tr/son-dakika.rss"
-    ),
+RSS_SOURCES = [
+    ("TRT HABER MANŞET", "https://www.trthaber.com/manset_articles.rss"),
+    ("TRT HABER SON DAKİKA", "https://www.trthaber.com/sondakika_articles.rss"),
+    ("TRT HABER GÜNDEM", "https://www.trthaber.com/gundem_articles.rss"),
+    ("TRT HABER TÜRKİYE", "https://www.trthaber.com/turkiye_articles.rss"),
+    ("TRT HABER DÜNYA", "https://www.trthaber.com/dunya_articles.rss"),
+    ("TRT HABER EKONOMİ", "https://www.trthaber.com/ekonomi_articles.rss"),
+    ("TRT HABER YAŞAM", "https://www.trthaber.com/yasam_articles.rss"),
+    ("TRT HABER TEKNOLOJİ", "https://www.trthaber.com/bilim_teknoloji_articles.rss"),
+    ("TRT HABER SAĞLIK", "https://www.trthaber.com/saglik_articles.rss"),
+    ("HABERTÜRK MANŞET", "https://www.haberturk.com/rss/manset.xml"),
+    ("HABERTÜRK GÜNDEM", "https://www.haberturk.com/rss/kategori/gundem.xml"),
+    ("HABERTÜRK EKONOMİ", "https://www.haberturk.com/rss/ekonomi.xml"),
+    ("HABERTÜRK DÜNYA", "https://www.haberturk.com/rss/kategori/dunya.xml"),
+    ("HABERTÜRK TEKNOLOJİ", "https://www.haberturk.com/rss/kategori/teknoloji.xml"),
+    ("HABERTÜRK VİDEO", "https://www.haberturk.com/rss/kategori/video.xml"),
 ]
 
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 Chrome/128.0 Safari/537.36"
+    ),
+    "Accept": "*/*",
+    "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.8",
+}
 
-# ============================================================
-# GENEL DEĞİŞKENLER
-# ============================================================
-
-haberler = []
-haber_lock = threading.Lock()
-
-son_haber_basliklari = set()
-
-yayindaki_haber = None
-
-program_calisiyor = True
-
-
-# ============================================================
-# RENK / YAZI TEMİZLEME
-# ============================================================
-
-def temizle_html(metin):
-
-    if not metin:
-        return ""
-
-    metin = html.unescape(metin)
-
-    metin = re.sub(
-        r"<script.*?</script>",
-        " ",
-        metin,
-        flags=re.I | re.S
-    )
-
-    metin = re.sub(
-        r"<style.*?</style>",
-        " ",
-        metin,
-        flags=re.I | re.S
-    )
-
-    metin = re.sub(
-        r"<[^>]+>",
-        " ",
-        metin
-    )
-
-    metin = metin.replace("\n", " ")
-    metin = metin.replace("\r", " ")
-    metin = metin.replace("\t", " ")
-
-    metin = re.sub(
-        r"\s+",
-        " ",
-        metin
-    )
-
-    return metin.strip()
+news_list = []
+news_lock = threading.Lock()
+played_titles = set()
+running = True
 
 
-# ============================================================
-# BAŞLIK TEMİZLE
-# ============================================================
+def install_package(package):
+    try:
+        __import__(package.replace("-", "_"))
+        return True
+    except ImportError:
+        try:
+            subprocess.check_call([
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                package
+            ])
+            return True
+        except Exception:
+            return False
 
-def temizle_baslik(baslik):
 
-    baslik = temizle_html(baslik)
+def setup_packages():
+    ok = True
 
-    baslik = baslik.replace(
-        "Son Dakika:",
-        ""
-    )
+    if not install_package("edge-tts"):
+        ok = False
 
-    baslik = baslik.strip()
+    if not install_package("requests"):
+        ok = False
 
-    return baslik
+    if not install_package("beautifulsoup4"):
+        ok = False
+
+    return ok
 
 
-# ============================================================
-# SSL
-# ============================================================
+setup_packages()
+
+import requests
+from bs4 import BeautifulSoup
+import edge_tts
+
 
 def ssl_context():
-
     return ssl._create_unverified_context()
 
 
-# ============================================================
-# HTTP İSTEK
-# ============================================================
+def clean_text(value):
+    if not value:
+        return ""
+
+    value = html.unescape(value)
+    value = re.sub(r"<script.*?</script>", " ", value, flags=re.I | re.S)
+    value = re.sub(r"<style.*?</style>", " ", value, flags=re.I | re.S)
+    value = re.sub(r"<[^>]+>", " ", value)
+    value = value.replace("\r", " ")
+    value = value.replace("\n", " ")
+    value = value.replace("\t", " ")
+    value = re.sub(r"\s+", " ", value)
+
+    return value.strip()
+
+
+def safe_filename(text):
+    text = re.sub(r'[\\/:*?"<>|]+', "_", text)
+    text = re.sub(r"\s+", "_", text)
+    return text[:100]
+
 
 def http_get(url, timeout=RSS_TIMEOUT):
-
-    headers = {
-        "User-Agent":
-            "Mozilla/5.0 "
-            "(Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 "
-            "(KHTML, like Gecko) "
-            "Chrome/126.0 Safari/537.36",
-
-        "Accept":
-            "application/rss+xml, "
-            "application/xml, "
-            "text/xml, "
-            "*/*",
-
-        "Connection":
-            "close"
-    }
-
-    request = urllib.request.Request(
+    response = requests.get(
         url,
-        headers=headers
-    )
-
-    with urllib.request.urlopen(
-        request,
+        headers=HEADERS,
         timeout=timeout,
-        context=ssl_context()
-    ) as response:
-
-        return response.read()
-
-
-# ============================================================
-# RSS OKU
-# ============================================================
-
-def rss_oku(kaynak_adi, url):
-
-    print(
-        f"[{datetime.now().strftime('%H:%M:%S')}] "
-        f"HABER KONTROL: {kaynak_adi}"
+        verify=False
     )
+    response.raise_for_status()
+    return response.content
 
+
+def get_node_text(item, name):
+    node = item.find(name)
+
+    if node is not None:
+        return node.text or ""
+
+    return ""
+
+
+def get_media_from_rss(item):
+    image = ""
+    video = ""
+
+    for element in item.iter():
+        tag = element.tag.lower()
+
+        if "thumbnail" in tag or "content" in tag:
+            url = element.attrib.get("url", "")
+
+            if url:
+                mime = element.attrib.get("type", "").lower()
+
+                if "video" in mime or url.lower().endswith((
+                    ".mp4",
+                    ".m3u8",
+                    ".webm"
+                )):
+                    if not video:
+                        video = url
+
+                elif not image:
+                    image = url
+
+        if "enclosure" in tag:
+            url = element.attrib.get("url", "")
+            mime = element.attrib.get("type", "").lower()
+
+            if url:
+                if "video" in mime or url.lower().endswith((
+                    ".mp4",
+                    ".m3u8",
+                    ".webm"
+                )):
+                    video = url
+                elif "image" in mime:
+                    image = url
+
+    return image, video
+
+
+def parse_rss(source_name, rss_url):
     try:
-
-        data = http_get(
-            url,
-            RSS_TIMEOUT
-        )
+        data = http_get(rss_url, RSS_TIMEOUT)
 
         root = ET.fromstring(data)
 
-        bulunan = []
-
-        # RSS item
         items = root.findall(".//item")
 
-        # Atom ihtimali
-        if not items:
+        result = []
 
-            items = root.findall(
-                ".//{http://www.w3.org/2005/Atom}entry"
-            )
-
-        for item in items:
-
-            title = ""
-
-            title_node = item.find("title")
-
-            if title_node is not None:
-
-                title = (
-                    title_node.text
-                    or ""
-                )
-
-            if not title:
-
-                title_node = item.find(
-                    "{http://www.w3.org/2005/Atom}title"
-                )
-
-                if title_node is not None:
-
-                    title = (
-                        title_node.text
-                        or ""
-                    )
-
-            title = temizle_baslik(
-                title
+        for item in items[:30]:
+            title = clean_text(
+                get_node_text(item, "title")
             )
 
             if not title:
                 continue
 
-
-            # ------------------------------------------------
-            # DESCRIPTION
-            # ------------------------------------------------
-
-            description = ""
-
-            desc_node = item.find(
-                "description"
+            description = clean_text(
+                get_node_text(item, "description")
             )
 
-            if desc_node is not None:
-
-                description = (
-                    desc_node.text
-                    or ""
-                )
-
-
-            # content:encoded
-            if not description:
-
-                for child in item:
-
-                    if child.tag.endswith(
-                        "encoded"
-                    ):
-
-                        description = (
-                            child.text
-                            or ""
-                        )
-
-                        break
-
-
-            # Atom summary
-            if not description:
-
-                summary = item.find(
-                    "{http://www.w3.org/2005/Atom}summary"
-                )
-
-                if summary is not None:
-
-                    description = (
-                        summary.text
-                        or ""
-                    )
-
-
-            description = temizle_html(
-                description
+            link = clean_text(
+                get_node_text(item, "link")
             )
 
+            image, video = get_media_from_rss(item)
 
-            # ------------------------------------------------
-            # ÇOK UZUN AÇIKLAMA
-            # ------------------------------------------------
+            result.append({
+                "source": source_name,
+                "title": title,
+                "description": description,
+                "link": link,
+                "image": image,
+                "video": video
+            })
 
-            if len(description) > MAX_ACIKLAMA:
+        return result
 
-                description = (
-                    description[:MAX_ACIKLAMA]
-                    + "..."
-                )
-
-
-            # ------------------------------------------------
-            # LINK
-            # ------------------------------------------------
-
-            link = ""
-
-            link_node = item.find(
-                "link"
-            )
-
-            if link_node is not None:
-
-                link = (
-                    link_node.text
-                    or ""
-                )
-
-
-            if not link:
-
-                atom_link = item.find(
-                    "{http://www.w3.org/2005/Atom}link"
-                )
-
-                if atom_link is not None:
-
-                    link = atom_link.attrib.get(
-                        "href",
-                        ""
-                    )
-
-
-            bulunan.append(
-                {
-                    "kaynak": kaynak_adi,
-                    "baslik": title,
-                    "aciklama": description,
-                    "link": link
-                }
-            )
-
-
-        print(
-            f"[{datetime.now().strftime('%H:%M:%S')}] "
-            f"{kaynak_adi}: {len(bulunan)} haber bulundu."
-        )
-
-        return bulunan
-
-
-    except Exception as e:
-
-        print(
-            f"[{datetime.now().strftime('%H:%M:%S')}] "
-            f"{kaynak_adi} RSS HATASI: {e}"
-        )
-
+    except Exception:
         return []
 
 
-# ============================================================
-# TÜM RSS'LERİ PARALEL OKU
-# ============================================================
+def collect_news():
+    all_news = []
 
-def haberleri_topla():
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        futures = []
 
-    print()
-    print(
-        "=============================================="
-    )
-
-    print(
-        "PARALEL RSS HABER TARAMASI BAŞLIYOR"
-    )
-
-    print(
-        f"Toplam RSS: {len(RSS_KAYNAKLARI)}"
-    )
-
-    print(
-        f"RSS timeout: {RSS_TIMEOUT} saniye"
-    )
-
-    print(
-        "=============================================="
-    )
-
-    yeni_haberler = []
-
-    # --------------------------------------------------------
-    # AYNI ANDA RSS KONTROLÜ
-    # --------------------------------------------------------
-
-    with ThreadPoolExecutor(
-        max_workers=RSS_WORKERS
-    ) as executor:
-
-        futureler = {}
-
-        for kaynak, url in RSS_KAYNAKLARI:
-
-            future = executor.submit(
-                rss_oku,
-                kaynak,
-                url
+        for source, url in RSS_SOURCES:
+            futures.append(
+                executor.submit(
+                    parse_rss,
+                    source,
+                    url
+                )
             )
 
-            futureler[future] = kaynak
-
-
-        for future in as_completed(
-            futureler
-        ):
-
-            kaynak = futureler[future]
-
+        for future in as_completed(futures):
             try:
+                data = future.result()
 
-                sonuc = future.result()
+                if data:
+                    all_news.extend(data)
 
-                if sonuc:
+            except Exception:
+                pass
 
-                    yeni_haberler.extend(
-                        sonuc
-                    )
+    unique = []
+    seen = set()
 
-            except Exception as e:
+    for item in all_news:
+        key = re.sub(
+            r"\W+",
+            "",
+            item["title"].lower()
+        )
 
-                print(
-                    f"{kaynak} THREAD HATASI: {e}"
-                )
-
-
-    # --------------------------------------------------------
-    # TEKRAR EDEN BAŞLIKLARI TEMİZLE
-    # --------------------------------------------------------
-
-    benzersiz = []
-
-    gorulen = set()
-
-    for haber in yeni_haberler:
-
-        baslik = haber[
-            "baslik"
-        ].strip().lower()
-
-        if not baslik:
+        if key in seen:
             continue
 
-        if baslik in gorulen:
-            continue
+        seen.add(key)
+        unique.append(item)
 
-        gorulen.add(
-            baslik
-        )
+    with news_lock:
+        news_list.clear()
+        news_list.extend(unique)
 
-        benzersiz.append(
-            haber
-        )
+    return unique
 
 
-    # --------------------------------------------------------
-    # ESKİ HABERLERİ TAMAMEN TEKRAR OYNATMA
-    # --------------------------------------------------------
-
-    with haber_lock:
-
-        global haberler
-
-        haberler = benzersiz
-
-
-    print()
-    print(
-        f"TOPLAM BENZERSİZ HABER: "
-        f"{len(benzersiz)}"
-    )
-
-    print(
-        "=============================================="
-    )
-
-    return benzersiz
-
-
-# ============================================================
-# LOGO İNDİR
-# ============================================================
-
-def logo_indir():
-
-    if os.path.exists(LOGO_FILE):
-
-        print(
-            "Logo dosyası zaten mevcut."
-        )
-
-        return True
-
-
-    print(
-        "Logo indiriliyor..."
-    )
+def get_page_data(url):
+    if not url:
+        return "", "", ""
 
     try:
+        response = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=10,
+            verify=False
+        )
 
-        request = urllib.request.Request(
-            LOGO_URL,
-            headers={
-                "User-Agent":
-                    "Mozilla/5.0"
+        response.raise_for_status()
+
+        soup = BeautifulSoup(
+            response.text,
+            "html.parser"
+        )
+
+        image = ""
+        video = ""
+        description = ""
+
+        meta_image = soup.find(
+            "meta",
+            attrs={
+                "property": "og:image"
             }
         )
 
-        with urllib.request.urlopen(
-            request,
+        if meta_image:
+            image = meta_image.get("content", "")
+
+        if not image:
+            meta_image = soup.find(
+                "meta",
+                attrs={
+                    "name": "twitter:image"
+                }
+            )
+
+            if meta_image:
+                image = meta_image.get(
+                    "content",
+                    ""
+                )
+
+        meta_description = soup.find(
+            "meta",
+            attrs={
+                "property": "og:description"
+            }
+        )
+
+        if meta_description:
+            description = meta_description.get(
+                "content",
+                ""
+            )
+
+        if not description:
+            meta_description = soup.find(
+                "meta",
+                attrs={
+                    "name": "description"
+                }
+            )
+
+            if meta_description:
+                description = meta_description.get(
+                    "content",
+                    ""
+                )
+
+        for meta in soup.find_all("meta"):
+            prop = (
+                meta.get("property", "")
+                or meta.get("name", "")
+            ).lower()
+
+            content = meta.get(
+                "content",
+                ""
+            )
+
+            if not content:
+                continue
+
+            if (
+                "video" in prop
+                and (
+                    ".mp4" in content.lower()
+                    or ".m3u8" in content.lower()
+                    or "video" in content.lower()
+                )
+            ):
+                video = content
+                break
+
+        if not video:
+            for source in soup.find_all(
+                "source"
+            ):
+                src = source.get("src", "")
+
+                if not src:
+                    continue
+
+                if (
+                    ".mp4" in src.lower()
+                    or ".m3u8" in src.lower()
+                    or "video" in source.get(
+                        "type",
+                        ""
+                    ).lower()
+                ):
+                    video = src
+                    break
+
+        if not video:
+            for video_tag in soup.find_all(
+                "video"
+            ):
+                src = video_tag.get(
+                    "src",
+                    ""
+                )
+
+                if src:
+                    video = src
+                    break
+
+        image = urllib.parse.urljoin(
+            url,
+            image
+        )
+
+        video = urllib.parse.urljoin(
+            url,
+            video
+        )
+
+        return (
+            image,
+            video,
+            clean_text(description)
+        )
+
+    except Exception:
+        return "", "", ""
+
+
+def download_file(url, filename):
+    if not url:
+        return False
+
+    try:
+        response = requests.get(
+            url,
+            headers=HEADERS,
             timeout=20,
-            context=ssl_context()
-        ) as response:
+            verify=False,
+            stream=True
+        )
 
-            data = response.read()
-
+        response.raise_for_status()
 
         with open(
-            LOGO_FILE,
+            filename,
             "wb"
-        ) as f:
+        ) as file:
+            for chunk in response.iter_content(
+                1024 * 64
+            ):
+                if chunk:
+                    file.write(chunk)
 
-            f.write(data)
-
-
-        if os.path.getsize(
-            LOGO_FILE
-        ) < 100:
-
-            print(
-                "Logo dosyası geçersiz."
-            )
-
+        if os.path.getsize(filename) < 1000:
+            os.remove(filename)
             return False
 
-
-        print(
-            "Logo başarıyla indirildi."
-        )
-
         return True
 
-
-    except Exception as e:
-
-        print(
-            f"Logo indirme hatası: {e}"
-        )
-
-        return False
-
-
-# ============================================================
-# GEREKLİ PAKETLER
-# ============================================================
-
-def edge_tts_kontrol():
-
-    try:
-
-        import edge_tts
-
-        return True
-
-    except ImportError:
-
-        print(
-            "edge-tts bulunamadı."
-        )
-
-        print(
-            "edge-tts kuruluyor..."
-        )
-
+    except Exception:
         try:
-
-            subprocess.check_call(
-                [
-                    sys.executable,
-                    "-m",
-                    "pip",
-                    "install",
-                    "edge-tts"
-                ]
-            )
-
-            print(
-                "edge-tts kuruldu."
-            )
-
-            return True
-
-        except Exception as e:
-
-            print(
-                f"edge-tts kurulum hatası: {e}"
-            )
-
-            return False
-
-
-# ============================================================
-# SPİKER METNİ
-# ============================================================
-
-def spiker_metni(haber):
-
-    baslik = haber[
-        "baslik"
-    ]
-
-    aciklama = haber[
-        "aciklama"
-    ]
-
-    if not aciklama:
-
-        aciklama = (
-            "Detaylar haber merkezlerinden "
-            "gelen bilgilerle takip ediliyor."
-        )
-
-
-    metin = (
-        "ZEM TV Haber. "
-        "Günün öne çıkan gelişmesi. "
-        f"{baslik}. "
-        f"{aciklama}. "
-        "Gelişmeler oldukça aktarmaya devam edeceğiz."
-    )
-
-    return metin
-
-
-# ============================================================
-# SES OLUŞTUR
-# ============================================================
-
-async def ses_olustur_async(metin):
-
-    import edge_tts
-
-    communicate = edge_tts.Communicate(
-        metin,
-        "tr-TR-AhmetNeural",
-        rate="+0%",
-        volume="+0%"
-    )
-
-    await communicate.save(
-        SES_DOSYASI
-    )
-
-
-def ses_olustur(metin):
-
-    try:
-
-        import asyncio
-
-        asyncio.run(
-            ses_olustur_async(
-                metin
-            )
-        )
-
-        return True
-
-    except Exception as e:
-
-        print(
-            f"Ses oluşturma hatası: {e}"
-        )
+            if os.path.exists(filename):
+                os.remove(filename)
+        except Exception:
+            pass
 
         return False
 
 
-# ============================================================
-# HAVA DURUMU
-# ============================================================
+def find_media(news):
+    image = news.get("image", "")
+    video = news.get("video", "")
+    description = news.get("description", "")
 
-def hava_durumu():
+    page_image = ""
+    page_video = ""
+    page_description = ""
+
+    if news.get("link"):
+        (
+            page_image,
+            page_video,
+            page_description
+        ) = get_page_data(
+            news["link"]
+        )
+
+    if page_image:
+        image = page_image
+
+    if page_video:
+        video = page_video
+
+    if page_description and len(
+        page_description
+    ) > len(description):
+        description = page_description
+
+    if video:
+        video = urllib.parse.unquote(
+            video
+        )
+
+        if video.lower().startswith(
+            "//"
+        ):
+            video = "https:" + video
+
+    if image:
+        image = urllib.parse.unquote(
+            image
+        )
+
+    news["image"] = image
+    news["video"] = video
+    news["description"] = description
+
+    return news
+
+
+def download_news_media(news):
+    try:
+        if news.get("video"):
+            video_url = news["video"]
+
+            if video_url.lower().startswith(
+                "http"
+            ):
+                if download_file(
+                    video_url,
+                    MEDIA_FILE
+                ):
+                    return "video"
+
+    except Exception:
+        pass
 
     try:
+        if news.get("image"):
+            if download_file(
+                news["image"],
+                IMAGE_FILE
+            ):
+                return "image"
 
-        sehir = urllib.parse.quote(
-            HAVA_SEHRI
-        )
+    except Exception:
+        pass
 
-        url = (
-            f"https://wttr.in/{sehir}"
-            "?format=j1"
-        )
-
-        data = http_get(
-            url,
-            5
-        )
-
-        obj = json.loads(
-            data.decode(
-                "utf-8",
-                errors="ignore"
-            )
-        )
-
-        current = obj[
-            "current_condition"
-        ][0]
-
-        sicaklik = current.get(
-            "temp_C",
-            "?"
-        )
-
-        durum = current.get(
-            "weatherDesc",
-            [
-                {
-                    "value":
-                        "Bilinmiyor"
-                }
-            ]
-        )[0]["value"]
+    return None
 
 
-        return (
-            f"{HAVA_SEHRI} "
-            f"{durum} "
-            f"{sicaklik}°C"
-        )
+def wrap_text(text, max_chars):
+    words = text.split()
+
+    lines = []
+    current = ""
+
+    for word in words:
+        if len(current) + len(word) + 1 <= max_chars:
+            if current:
+                current += " "
+
+            current += word
+        else:
+            if current:
+                lines.append(current)
+
+            current = word
+
+    if current:
+        lines.append(current)
+
+    return lines
 
 
-    except Exception as e:
+def escape_drawtext(text):
+    text = clean_text(text)
 
-        print(
-            f"Hava durumu alınamadı: {e}"
-        )
-
-        return (
-            f"{HAVA_SEHRI} "
-            "hava bilgisi alınamıyor"
-        )
-
-
-# ============================================================
-# PİYASA
-# ============================================================
-
-def piyasa():
-
-    try:
-
-        url = (
-            "https://finans.truncgil.com/today.json"
-        )
-
-        data = http_get(
-            url,
-            5
-        )
-
-        obj = json.loads(
-            data.decode(
-                "utf-8",
-                errors="ignore"
-            )
-        )
-
-
-        usd = "—"
-        eur = "—"
-        gram = "—"
-        ceyrek = "—"
-
-
-        if "USD" in obj:
-
-            usd = (
-                obj["USD"].get(
-                    "Alış",
-                    "—"
-                )
-            )
-
-
-        if "EUR" in obj:
-
-            eur = (
-                obj["EUR"].get(
-                    "Alış",
-                    "—"
-                )
-            )
-
-
-        if "gram-altin" in obj:
-
-            gram = (
-                obj["gram-altin"].get(
-                    "Alış",
-                    "—"
-                )
-            )
-
-
-        if "ceyrek-altin" in obj:
-
-            ceyrek = (
-                obj["ceyrek-altin"].get(
-                    "Alış",
-                    "—"
-                )
-            )
-
-
-        return (
-            f"USD {usd}   "
-            f"EUR {eur}   "
-            f"GRAM {gram}   "
-            f"ÇEYREK {ceyrek}"
-        )
-
-
-    except Exception as e:
-
-        print(
-            f"Piyasa bilgisi alınamadı: {e}"
-        )
-
-        return (
-            "USD —   "
-            "EUR —   "
-            "GRAM —   "
-            "ÇEYREK —"
-        )
-
-
-# ============================================================
-# FFMPEG TEXT TEMİZLEME
-# ============================================================
-
-def ffmpeg_text(text):
-
-    if text is None:
-
-        return ""
-
-
-    text = str(text)
-
-
-    # HTML vs.
-    text = temizle_html(
-        text
-    )
-
-
-    # FFmpeg drawtext özel karakterleri
     text = text.replace(
         "\\",
         ""
@@ -1041,363 +618,366 @@ def ffmpeg_text(text):
         ")"
     )
 
+    text = text.replace(
+        ";",
+        ","
+    )
 
     return text
 
 
-# ============================================================
-# FFMPEG KOMUTU
-# ============================================================
-
-def ffmpeg_komutu(haber):
-
-    baslik = ffmpeg_text(
-        haber["baslik"]
+def create_voice(news):
+    title = news["title"]
+    description = news.get(
+        "description",
+        ""
     )
 
-    kaynak = ffmpeg_text(
-        haber["kaynak"]
-    )
-
-    tarih = datetime.now().strftime(
-        "%d.%m.%Y"
-    )
-
-    saat = datetime.now().strftime(
-        "%H:%M"
-    )
-
-    hava = ffmpeg_text(
-        hava_durumu()
-    )
-
-    market = ffmpeg_text(
-        piyasa()
-    )
-
-
-    # --------------------------------------------------------
-    # HABER BAŞLIĞINI EKRANA SIĞDIR
-    # --------------------------------------------------------
-
-    if len(baslik) > 100:
-
-        baslik = (
-            baslik[:97]
-            + "..."
+    if not description:
+        description = (
+            "Haberin ayrıntıları "
+            "ZEM TV Haber ekranlarında."
         )
 
+    description = description[:850]
 
-    # --------------------------------------------------------
-    # AÇIKLAMA
-    # --------------------------------------------------------
+    text = (
+        "ZEM TV Haber. "
+        f"{title}. "
+        f"{description}. "
+        "Gelişmeleri aktarmaya devam edeceğiz."
+    )
 
-    aciklama = ffmpeg_text(
-        haber.get(
-            "aciklama",
+    async def generate():
+        communicate = edge_tts.Communicate(
+            text,
+            "tr-TR-AhmetNeural",
+            rate="-2%",
+            volume="+0%"
+        )
+
+        await communicate.save(
+            VOICE_FILE
+        )
+
+    try:
+        asyncio.run(
+            generate()
+        )
+        return os.path.exists(
+            VOICE_FILE
+        )
+    except Exception:
+        return False
+
+
+def get_weather():
+    try:
+        url = (
+            "https://wttr.in/"
+            + urllib.parse.quote(CITY)
+            + "?format=j1"
+        )
+
+        response = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=6,
+            verify=False
+        )
+
+        data = response.json()
+
+        current = data[
+            "current_condition"
+        ][0]
+
+        temp = current.get(
+            "temp_C",
+            "?"
+        )
+
+        condition = current[
+            "weatherDesc"
+        ][0]["value"]
+
+        return (
+            f"{CITY} {temp} C {condition}"
+        )
+
+    except Exception:
+        return f"{CITY} hava bilgisi"
+
+
+def get_ticker():
+    with news_lock:
+        titles = [
+            item["title"]
+            for item in news_list[:12]
+        ]
+
+    if not titles:
+        return (
+            "ZEM TV HABER • "
+            "SON DAKİKA GELİŞMELERİ • "
+        )
+
+    return (
+        "     •     ".join(
+            titles
+        )
+        + "     •     ZEM TV HABER     •     "
+    )
+
+
+def create_placeholder():
+    if os.path.exists(IMAGE_FILE):
+        return True
+
+    try:
+        subprocess.run(
+            [
+                FFMPEG,
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=0x18212b:s=1280x480",
+                "-frames:v",
+                "1",
+                IMAGE_FILE
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+
+        return os.path.exists(
+            IMAGE_FILE
+        )
+
+    except Exception:
+        return False
+
+
+def download_logo():
+    if os.path.exists(LOGO_FILE):
+        return True
+
+    return download_file(
+        LOGO_URL,
+        LOGO_FILE
+    )
+
+
+def make_filter(news, media_type):
+    font = FONT_FILE.replace(
+        "\\",
+        "/"
+    ).replace(
+        ":",
+        "\\:"
+    )
+
+    logo = os.path.abspath(
+        LOGO_FILE
+    ).replace(
+        "\\",
+        "/"
+    ).replace(
+        ":",
+        "\\:"
+    )
+
+    title = escape_drawtext(
+        news["title"]
+    )
+
+    source = escape_drawtext(
+        news["source"]
+    )
+
+    description = clean_text(
+        news.get(
+            "description",
             ""
         )
     )
 
-    if not aciklama:
-
-        aciklama = (
-            "Gelişmeler oldukça "
-            "aktarmaya devam edeceğiz."
+    if not description:
+        description = (
+            "Haberin ayrıntıları "
+            "ZEM TV Haber ekranlarında."
         )
 
+    description_lines = wrap_text(
+        description,
+        72
+    )[:3]
 
-    if len(aciklama) > 280:
+    if len(title) > 90:
+        title = title[:87] + "..."
 
-        aciklama = (
-            aciklama[:277]
-            + "..."
-        )
+    title_lines = wrap_text(
+        title,
+        54
+    )[:2]
 
-
-    # --------------------------------------------------------
-    # WINDOWS FONT PATH
-    # --------------------------------------------------------
-
-    font = FONT_FILE.replace(
-        "\\",
-        "/"
+    weather = escape_drawtext(
+        get_weather()
     )
 
-    font = font.replace(
-        ":",
-        "\\:"
+    date_text = datetime.now().strftime(
+        "%d.%m.%Y"
     )
 
-
-    # --------------------------------------------------------
-    # LOGO
-    # --------------------------------------------------------
-
-    logo_path = os.path.abspath(
-        LOGO_FILE
+    time_text = datetime.now().strftime(
+        "%H:%M"
     )
 
-    logo_path = logo_path.replace(
-        "\\",
-        "/"
+    ticker = escape_drawtext(
+        get_ticker()
     )
 
-    logo_path = logo_path.replace(
-        ":",
-        "\\:"
+    filters = []
+
+    filters.append(
+        "drawbox=x=0:y=0:w=1280:h=70:"
+        "color=0x08111b:t=fill"
     )
 
-
-    # --------------------------------------------------------
-    # FILTER GRAPH
-    # --------------------------------------------------------
-
-    filter_complex = (
-        f"[0:v]"
-        f"drawtext="
-        f"fontfile='{font}':"
+    filters.append(
+        f"drawtext=fontfile='{font}':"
         f"text='ZEM TV HABER':"
         f"fontcolor=white:"
         f"fontsize=30:"
-        f"x=35:"
-        f"y=25,"
-        
-        f"drawtext="
-        f"fontfile='{font}':"
-        f"text='{tarih}  {saat}':"
-        f"fontcolor=white:"
-        f"fontsize=24:"
-        f"x=35:"
-        f"y=70,"
-        
-        f"drawtext="
-        f"fontfile='{font}':"
-        f"text='{hava}':"
-        f"fontcolor=white:"
-        f"fontsize=23:"
-        f"x=35:"
-        f"y=112,"
-        
-        f"drawtext="
-        f"fontfile='{font}':"
-        f"text='{market}':"
-        f"fontcolor=white:"
-        f"fontsize=21:"
-        f"x=35:"
-        f"y=153,"
-        
-        f"drawbox="
-        f"x=0:"
-        f"y=200:"
-        f"w=1280:"
-        f"h=2:"
-        f"color=0x2f4054:"
-        f"t=fill,"
-        
-        f"drawbox="
-        f"x=0:"
-        f"y=535:"
-        f"w=1280:"
-        f"h=185:"
-        f"color=black@0.92:"
-        f"t=fill,"
-        
-        f"drawtext="
-        f"fontfile='{font}':"
-        f"text='{baslik}':"
-        f"fontcolor=white:"
-        f"fontsize=34:"
-        f"x=35:"
-        f"y=555:"
-        f"enable='between(t,0,9999)',"
-        
-        f"drawtext="
-        f"fontfile='{font}':"
-        f"text='{aciklama}':"
-        f"fontcolor=white:"
-        f"fontsize=23:"
-        f"x=35:"
-        f"y=610:"
-        f"enable='between(t,0,9999)',"
-        
-        f"drawtext="
-        f"fontfile='{font}':"
-        f"text='KAYNAK: {kaynak}':"
-        f"fontcolor=0xcccccc:"
-        f"fontsize=20:"
-        f"x=35:"
-        f"y=680,"
-        
-        f"[v0]null[vbase];"
-        
-        f"[1:v]"
-        f"scale=190:-1"
-        f"[logo];"
-        
-        f"[vbase][logo]"
-        f"overlay="
-        f"W-w-25:"
-        f"60:"
-        f"format=auto"
-        f"[vout]"
+        f"x=25:y=18"
     )
 
-
-    # --------------------------------------------------------
-    # NOT:
-    #
-    # Üstteki zincirin güvenli olması için aşağıdaki alternatif
-    # filter kullanılmaktadır.
-    # --------------------------------------------------------
-
-    filter_complex = (
-        f"[0:v]"
-        
-        f"drawtext="
-        f"fontfile='{font}':"
-        f"text='ZEM TV HABER':"
-        f"fontcolor=white:"
-        f"fontsize=30:"
-        f"x=35:"
-        f"y=25,"
-        
-        f"drawtext="
-        f"fontfile='{font}':"
-        f"text='{tarih}  {saat}':"
-        f"fontcolor=white:"
-        f"fontsize=24:"
-        f"x=35:"
-        f"y=70,"
-        
-        f"drawtext="
-        f"fontfile='{font}':"
-        f"text='{hava}':"
-        f"fontcolor=white:"
-        f"fontsize=23:"
-        f"x=35:"
-        f"y=112,"
-        
-        f"drawtext="
-        f"fontfile='{font}':"
-        f"text='{market}':"
+    filters.append(
+        f"drawtext=fontfile='{font}':"
+        f"text='{date_text}  {time_text}':"
         f"fontcolor=white:"
         f"fontsize=21:"
-        f"x=35:"
-        f"y=153,"
-        
-        f"drawbox="
-        f"x=0:"
-        f"y=200:"
-        f"w=1280:"
-        f"h=2:"
-        f"color=0x2f4054:"
-        f"t=fill,"
-        
-        f"drawbox="
-        f"x=0:"
-        f"y=535:"
-        f"w=1280:"
-        f"h=185:"
-        f"color=black@0.92:"
-        f"t=fill,"
-        
-        f"drawtext="
-        f"fontfile='{font}':"
-        f"text='{baslik}':"
-        f"fontcolor=white:"
-        f"fontsize=34:"
-        f"x=35:"
-        f"y=555,"
-        
-        f"drawtext="
-        f"fontfile='{font}':"
-        f"text='{aciklama}':"
-        f"fontcolor=white:"
-        f"fontsize=23:"
-        f"x=35:"
-        f"y=610,"
-        
-        f"drawtext="
-        f"fontfile='{font}':"
-        f"text='KAYNAK  {kaynak}':"
-        f"fontcolor=0xcccccc:"
-        f"fontsize=20:"
-        f"x=35:"
-        f"y=680"
-        
-        f"[base];"
-        
-        f"[1:v]"
-        f"scale=190:-1"
-        f"[logo];"
-        
-        f"[base][logo]"
-        f"overlay=W-w-25:60"
-        f"[vout]"
+        f"x=330:y=22"
     )
 
+    filters.append(
+        f"drawtext=fontfile='{font}':"
+        f"text='{weather}':"
+        f"fontcolor=white:"
+        f"fontsize=21:"
+        f"x=540:y=22"
+    )
 
-    cmd = [
+    filters.append(
+        "drawbox=x=0:y=70:w=1280:h=470:"
+        "color=0x101923@0.35:t=fill"
+    )
 
+    y = 555
+
+    for line in title_lines:
+        filters.append(
+            f"drawtext=fontfile='{font}':"
+            f"text='{escape_drawtext(line)}':"
+            f"fontcolor=white:"
+            f"fontsize=29:"
+            f"x=25:y={y}"
+        )
+
+        y += 34
+
+    y += 6
+
+    for line in description_lines:
+        filters.append(
+            f"drawtext=fontfile='{font}':"
+            f"text='{escape_drawtext(line)}':"
+            f"fontcolor=0xe0e0e0:"
+            f"fontsize=19:"
+            f"x=25:y={y}"
+        )
+
+        y += 24
+
+    filters.append(
+        f"drawtext=fontfile='{font}':"
+        f"text='KAYNAK  {source}':"
+        f"fontcolor=0xb8c4cf:"
+        f"fontsize=17:"
+        f"x=25:y=655"
+    )
+
+    filters.append(
+        "drawbox=x=0:y=682:w=1280:h=38:"
+        "color=0x050505:t=fill"
+    )
+
+    filters.append(
+        f"drawtext=fontfile='{font}':"
+        f"text='{ticker}':"
+        f"fontcolor=white:"
+        f"fontsize=18:"
+        f"x=w-mod(t*110\\,tw+1280):"
+        f"y=692"
+    )
+
+    filters.append(
+        f"movie='{logo}'"
+        "[logo];"
+        "[logo]scale=150:-1[logo2];"
+        "[base][logo2]overlay=W-w-20:12[vout]"
+    )
+
+    base = ",".join(
+        filters[:-1]
+    )
+
+    final_logo = filters[-1]
+
+    final_filter = (
+        f"[0:v]{base}[base];"
+        f"{final_logo}"
+    )
+
+    return final_filter
+
+
+def run_ffmpeg_image(news):
+    if not os.path.exists(IMAGE_FILE):
+        create_placeholder()
+
+    filter_complex = make_filter(
+        news,
+        "image"
+    )
+
+    command = [
         FFMPEG,
-
         "-hide_banner",
-
         "-loglevel",
-        "info",
-
+        "warning",
         "-y",
 
-
-        # ----------------------------------------------------
-        # ANA GÖRÜNTÜ
-        # ----------------------------------------------------
-
-        "-f",
-        "lavfi",
+        "-loop",
+        "1",
+        "-i",
+        IMAGE_FILE,
 
         "-i",
-        f"color=c=0x101722:s={WIDTH}x{HEIGHT}:r={FPS}",
-
-
-        # ----------------------------------------------------
-        # LOGO
-        # ----------------------------------------------------
-
-        "-stream_loop",
-        "-1",
-
-        "-i",
-        LOGO_FILE,
-
-
-        # ----------------------------------------------------
-        # SES
-        # ----------------------------------------------------
-
-        "-i",
-        SES_DOSYASI,
-
-
-        # ----------------------------------------------------
-        # FILTER
-        # ----------------------------------------------------
+        VOICE_FILE,
 
         "-filter_complex",
         filter_complex,
-
-
-        # ----------------------------------------------------
-        # VIDEO
-        # ----------------------------------------------------
 
         "-map",
         "[vout]",
 
         "-map",
-        "2:a",
+        "1:a",
 
+        "-t",
+        str(NEWS_DURATION),
 
         "-c:v",
         "libx264",
@@ -1408,9 +988,6 @@ def ffmpeg_komutu(haber):
         "-tune",
         "zerolatency",
 
-        "-profile:v",
-        "main",
-
         "-pix_fmt",
         "yuv420p",
 
@@ -1420,12 +997,6 @@ def ffmpeg_komutu(haber):
         "-g",
         "50",
 
-        "-keyint_min",
-        "50",
-
-        "-sc_threshold",
-        "0",
-
         "-b:v",
         "3000k",
 
@@ -1434,11 +1005,6 @@ def ffmpeg_komutu(haber):
 
         "-bufsize",
         "6000k",
-
-
-        # ----------------------------------------------------
-        # AUDIO
-        # ----------------------------------------------------
 
         "-c:a",
         "aac",
@@ -1452,666 +1018,301 @@ def ffmpeg_komutu(haber):
         "-ac",
         "2",
 
-        "-af",
-        "aresample=async=1",
-
-
-        # ----------------------------------------------------
-        # RTMP
-        # ----------------------------------------------------
+        "-shortest",
 
         "-f",
         "flv",
 
-        "-flvflags",
-        "no_duration_filesize",
+        RTMP_URL
+    ]
+
+    return subprocess.run(
+        command
+    ).returncode
+
+
+def run_ffmpeg_video(news):
+    filter_complex = make_filter(
+        news,
+        "video"
+    )
+
+    command = [
+        FFMPEG,
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-y",
+
+        "-stream_loop",
+        "-1",
+
+        "-i",
+        MEDIA_FILE,
+
+        "-i",
+        VOICE_FILE,
+
+        "-filter_complex",
+        filter_complex,
+
+        "-map",
+        "[vout]",
+
+        "-map",
+        "1:a",
+
+        "-t",
+        str(NEWS_DURATION),
+
+        "-c:v",
+        "libx264",
+
+        "-preset",
+        "veryfast",
+
+        "-tune",
+        "zerolatency",
+
+        "-pix_fmt",
+        "yuv420p",
+
+        "-r",
+        str(FPS),
+
+        "-g",
+        "50",
+
+        "-b:v",
+        "3500k",
+
+        "-maxrate",
+        "4000k",
+
+        "-bufsize",
+        "7000k",
+
+        "-c:a",
+        "aac",
+
+        "-b:a",
+        "128k",
+
+        "-ar",
+        "44100",
+
+        "-ac",
+        "2",
+
+        "-shortest",
+
+        "-f",
+        "flv",
 
         RTMP_URL
     ]
 
+    return subprocess.run(
+        command
+    ).returncode
 
-    return cmd
 
-
-# ============================================================
-# FFMPEG BAŞLAT
-# ============================================================
-
-def ffmpeg_baslat(haber):
-
-    cmd = ffmpeg_komutu(
-        haber
+def prepare_news(news):
+    news = find_media(
+        news
     )
 
-
-    print()
-    print(
-        "=============================================="
+    media_type = download_news_media(
+        news
     )
 
-    print(
-        "FFMPEG BAŞLATILIYOR"
-    )
-
-    print(
-        f"Haber: {haber['baslik']}"
-    )
-
-    print(
-        f"Kaynak: {haber['kaynak']}"
-    )
-
-    print(
-        f"RTMP: {RTMP_URL}"
-    )
-
-    print(
-        "=============================================="
-    )
+    return media_type
 
 
-    try:
-
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1
+def choose_news():
+    with news_lock:
+        available = list(
+            news_list
         )
 
-
-        baslangic = time.time()
-
-
-        while True:
-
-            line = process.stdout.readline()
-
-            if line:
-
-                print(
-                    "[FFMPEG]",
-                    line.strip()
-                )
-
-
-            # ------------------------------------------------
-            # HATA / ÇIKIŞ
-            # ------------------------------------------------
-
-            if process.poll() is not None:
-
-                print(
-                    "FFmpeg kapandı."
-                )
-
-                break
-
-
-            # ------------------------------------------------
-            # HABER SÜRESİ
-            # ------------------------------------------------
-
-            if (
-                time.time()
-                - baslangic
-                >= HABER_SURESI
-            ):
-
-                print(
-                    f"{HABER_SURESI} saniye doldu."
-                )
-
-                print(
-                    "Yeni haber hazırlanıyor..."
-                )
-
-                try:
-
-                    process.terminate()
-
-                    process.wait(
-                        timeout=5
-                    )
-
-                except Exception:
-
-                    try:
-
-                        process.kill()
-
-                    except Exception:
-
-                        pass
-
-                break
-
-
-        return True
-
-
-    except Exception as e:
-
-        print(
-            f"FFmpeg başlatma hatası: {e}"
-        )
-
-        return False
-
-
-# ============================================================
-# HABER SEÇ
-# ============================================================
-
-def haber_sec():
-
-    with haber_lock:
-
-        mevcut = list(
-            haberler
-        )
-
-
-    if not mevcut:
-
+    if not available:
         return None
 
+    fresh = []
 
-    # --------------------------------------------------------
-    # ÖNCE YENİ HABER BUL
-    # --------------------------------------------------------
+    for item in available:
+        key = item["title"].strip().lower()
 
-    yeni = []
+        if key not in played_titles:
+            fresh.append(item)
 
-    for haber in mevcut:
+    if not fresh:
+        played_titles.clear()
+        fresh = available
 
-        key = (
-            haber["baslik"]
-            .strip()
-            .lower()
-        )
+    item = fresh[0]
 
-        if key not in son_haber_basliklari:
-
-            yeni.append(
-                haber
-            )
-
-
-    if yeni:
-
-        haber = yeni[0]
-
-    else:
-
-        # Hepsi oynatıldıysa
-        # eski listeyi yeniden başlat
-
-        son_haber_basliklari.clear()
-
-        haber = mevcut[0]
-
-
-    son_haber_basliklari.add(
-        haber["baslik"]
-        .strip()
-        .lower()
+    played_titles.add(
+        item["title"].strip().lower()
     )
 
+    return item
 
-    return haber
 
-
-# ============================================================
-# SÜREKLİ RSS GÜNCELLEME THREAD
-# ============================================================
-
-def rss_thread():
-
-    global program_calisiyor
-
-    while program_calisiyor:
-
+def cleanup_files():
+    for filename in [
+        VOICE_FILE,
+        MEDIA_FILE,
+        IMAGE_FILE
+    ]:
         try:
-
-            haberleri_topla()
-
-        except Exception as e:
-
-            print(
-                f"RSS THREAD HATASI: {e}"
-            )
+            if os.path.exists(filename):
+                os.remove(filename)
+        except Exception:
+            pass
 
 
-        print()
-        print(
-            f"Bir sonraki RSS taraması "
-            f"{HABER_KONTROL_SURESI} saniye sonra."
-        )
+def rss_updater():
+    global running
 
-
-        # ----------------------------------------------------
-        # 1 saniyelik beklemeler ile durdurulabilir thread
-        # ----------------------------------------------------
+    while running:
+        try:
+            collect_news()
+        except Exception:
+            pass
 
         for _ in range(
-            HABER_KONTROL_SURESI
+            RSS_REFRESH
         ):
-
-            if not program_calisiyor:
-
-                break
+            if not running:
+                return
 
             time.sleep(1)
 
 
-# ============================================================
-# KLASÖR / DOSYA KONTROL
-# ============================================================
+def main():
+    global running
 
-def sistem_kontrol():
-
-    print()
-    print(
-        "=============================================="
-    )
-
-    print(
-        "ZEM TV HABER v3.0"
-    )
-
-    print(
-        "=============================================="
-    )
-
-    print(
-        f"RTMP: {RTMP_URL}"
-    )
-
-    print(
-        f"FFmpeg: {FFMPEG}"
-    )
-
-    print(
-        f"Logo: {LOGO_URL}"
-    )
-
-    print(
-        f"Hava şehri: {HAVA_SEHRI}"
-    )
-
-    print(
-        "=============================================="
-    )
-
-
-    # --------------------------------------------------------
-    # FFMPEG
-    # --------------------------------------------------------
+    os.system("title ZEM TV HABER")
 
     if not os.path.exists(
         FFMPEG
     ):
-
-        print()
         print(
-            "HATA: FFmpeg bulunamadı!"
+            "FFmpeg bulunamadı: "
+            + FFMPEG
         )
-
-        print(
-            FFMPEG
-        )
-
-        return False
-
-
-    print(
-        "FFmpeg bulundu."
-    )
-
-
-    # --------------------------------------------------------
-    # FONT
-    # --------------------------------------------------------
-
-    if os.path.exists(
-        FONT_FILE
-    ):
-
-        print(
-            f"Arial font bulundu: {FONT_FILE}"
-        )
-
-    else:
-
-        print(
-            "UYARI: Arial font bulunamadı."
-        )
-
-        print(
-            "Windows font klasörü kontrol edilecek."
-        )
-
-
-    # --------------------------------------------------------
-    # EDGE TTS
-    # --------------------------------------------------------
-
-    if not edge_tts_kontrol():
-
-        return False
-
-
-    # --------------------------------------------------------
-    # LOGO
-    # --------------------------------------------------------
-
-    if not logo_indir():
-
-        print(
-            "UYARI: Logo indirilemedi."
-        )
-
-        return False
-
-
-    # --------------------------------------------------------
-    # LOGO BOYUTU
-    # --------------------------------------------------------
-
-    try:
-
-        size = os.path.getsize(
-            LOGO_FILE
-        )
-
-        print(
-            f"Logo boyutu: {size} byte"
-        )
-
-    except Exception:
-
-        pass
-
-
-    return True
-
-
-# ============================================================
-# ANA PROGRAM
-# ============================================================
-
-def main():
-
-    global program_calisiyor
-
-
-    print()
-    print(
-        "##############################################"
-    )
-
-    print(
-        "#                                            #"
-    )
-
-    print(
-        "#              ZEM TV HABER                 #"
-    )
-
-    print(
-        "#              7/24 OTOMATİK                #"
-    )
-
-    print(
-        "#                                            #"
-    )
-
-    print(
-        "##############################################"
-    )
-
-
-    # --------------------------------------------------------
-    # SİSTEM KONTROL
-    # --------------------------------------------------------
-
-    if not sistem_kontrol():
-
-        print()
-        print(
-            "Sistem kontrolü başarısız."
-        )
-
-        input(
-            "Çıkmak için Enter..."
-        )
-
         return
 
+    if not os.path.exists(
+        FONT_FILE
+    ):
+        print(
+            "Arial bulunamadı: "
+            + FONT_FILE
+        )
+        return
 
-    # --------------------------------------------------------
-    # İLK HABER TARAMASI
-    # --------------------------------------------------------
+    if not download_logo():
+        print(
+            "Logo indirilemedi."
+        )
+        return
 
-    print()
     print(
-        "İlk haber taraması başlıyor..."
+        "ZEM TV HABER başlatılıyor..."
     )
 
+    collect_news()
 
-    haberleri_topla()
+    if not news_list:
+        print(
+            "RSS kaynaklarından haber alınamadı."
+        )
 
-
-    # --------------------------------------------------------
-    # RSS THREAD
-    # --------------------------------------------------------
-
-    thread = threading.Thread(
-        target=rss_thread,
+    updater = threading.Thread(
+        target=rss_updater,
         daemon=True
     )
 
-    thread.start()
+    updater.start()
 
-
-    # --------------------------------------------------------
-    # ANA YAYIN DÖNGÜSÜ
-    # --------------------------------------------------------
-
-    while True:
-
+    while running:
         try:
+            news = choose_news()
 
-            haber = haber_sec()
-
-
-            # ------------------------------------------------
-            # HABER YOKSA BEKLE
-            # ------------------------------------------------
-
-            if haber is None:
-
-                print()
-                print(
-                    "Henüz haber alınamadı."
-                )
-
-                print(
-                    "5 saniye sonra tekrar denenecek."
-                )
-
+            if not news:
                 time.sleep(5)
-
                 continue
 
-
-            global yayindaki_haber
-
-            yayindaki_haber = haber
-
-
-            print()
             print(
-                "=============================================="
+                "HABER: "
+                + news["title"]
             )
 
-            print(
-                "YENİ HABER"
+            news = find_media(
+                news
             )
 
-            print(
-                f"Kaynak : {haber['kaynak']}"
+            media_type = prepare_news(
+                news
             )
 
-            print(
-                f"Başlık : {haber['baslik']}"
-            )
-
-            print(
-                "=============================================="
-            )
-
-
-            # ------------------------------------------------
-            # SPİKER
-            # ------------------------------------------------
-
-            metin = spiker_metni(
-                haber
-            )
-
-
-            print()
-            print(
-                "SPİKER METNİ:"
-            )
-
-            print(
-                metin
-            )
-
-
-            print()
-            print(
-                "Ses oluşturuluyor..."
-            )
-
-
-            if not ses_olustur(
-                metin
+            if not create_voice(
+                news
             ):
+                time.sleep(3)
+                continue
 
-                print(
-                    "Ses oluşturulamadı."
+            if media_type == "video":
+                result = run_ffmpeg_video(
+                    news
                 )
 
-                time.sleep(3)
+                if result != 0:
+                    cleanup_files()
 
-                continue
+                    if os.path.exists(
+                        IMAGE_FILE
+                    ):
+                        pass
+                    else:
+                        create_placeholder()
 
-
-            print(
-                "Ses hazır."
-            )
-
-
-            # ------------------------------------------------
-            # FFMPEG
-            # ------------------------------------------------
-
-            ffmpeg_baslat(
-                haber
-            )
-
-
-            # ------------------------------------------------
-            # DOSYA TEMİZLİĞİ
-            # ------------------------------------------------
-
-            try:
-
-                if os.path.exists(
-                    SES_DOSYASI
-                ):
-
-                    os.remove(
-                        SES_DOSYASI
+                    result = run_ffmpeg_image(
+                        news
                     )
 
-            except Exception:
+            elif media_type == "image":
+                result = run_ffmpeg_image(
+                    news
+                )
 
-                pass
+            else:
+                create_placeholder()
 
+                result = run_ffmpeg_image(
+                    news
+                )
 
-            # ------------------------------------------------
-            # KISA BEKLEME
-            # ------------------------------------------------
+            cleanup_files()
 
-            time.sleep(1)
-
+            time.sleep(2)
 
         except KeyboardInterrupt:
-
-            print()
-            print(
-                "Program kullanıcı tarafından durduruldu."
-            )
-
-            program_calisiyor = False
-
+            running = False
             break
 
-
         except Exception as e:
-
-            print()
             print(
-                "ANA PROGRAM HATASI:"
-            )
-
-            print(
+                "HATA:",
                 e
             )
+            time.sleep(5)
 
-            print(
-                "10 saniye sonra devam edilecek."
-            )
+    cleanup_files()
 
-            time.sleep(10)
-
-
-# ============================================================
-# PROGRAMI ÇALIŞTIR
-# ============================================================
 
 if __name__ == "__main__":
-
-    try:
-
-        main()
-
-    except KeyboardInterrupt:
-
-        print()
-        print(
-            "ZEM TV HABER kapatıldı."
-        )
-
-    except Exception as e:
-
-        print()
-        print(
-            "KRİTİK HATA:"
-        )
-
-        print(
-            e
-        )
-
-        input(
-            "Kapatmak için Enter..."
-        )
+    main()
+```0
