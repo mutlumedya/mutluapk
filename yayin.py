@@ -13,7 +13,7 @@ import threading
 # ============================================================
 # ZEM TV COCUK
 # M3U8 -> RTMP
-# LOGO (SAG UST) + DINAMIK ZEM TV/HABERLER + SAAT + PERIYODIK BANT
+# LOGO (SAG UST) + DINAMIK ZEM TV / HABERLER + SAAT + PERIYODIK BANT
 # ============================================================
 
 
@@ -174,10 +174,9 @@ def create_filter():
     logo = ff_path(LOGO_FILE)
     ticker = ff_path(TICKER_FILE)
 
-    # 300 saniye = 5 dakika. Her 300 saniyede bir bant 20 saniye boyunca çalışıp kaybolacak.
-    # Modulo süresi 300 saniye, aktif kalma süresi 0 ile 20 saniye arası.
+    # 300 saniye = 5 dakika. Her 5 dakikada bir ilk 25 saniye bant ve haberler aktif olacak.
     cycle_expr = "mod(t\\,300)"
-    active_expr = f"between({cycle_expr},0,20)"
+    active_expr = f"between({cycle_expr},0,25)"
 
     filter_text = (
         # Ana videoyu standart 1280x720 boyutuna zorla ve formatı sabitle
@@ -195,7 +194,7 @@ def create_filter():
         # SAAT KUTUSU (Sabit: w=130, h=80)
         "[v2]drawbox=x=150:y=640:w=130:h=80:color=0x374151@1.0:t=fill[v3];"
 
-        # CANLI SAAT (Sabit)
+        # CANLI SAAT (Sabit - Asla kaybolmaz)
         "[v3]drawtext="
         f"fontfile='{font}':"
         "text='%{localtime\\:%H\\\\\\:%M}':"
@@ -209,18 +208,18 @@ def create_filter():
         # SOL KISIM METNİ: Bant yokken "ZEM TV", bant aktifken kırmızı "HABERLER"
         "[v4]drawtext="
         f"fontfile='{font}':"
-        f"text='ZEM TV':"
+        "text='ZEM TV':"
         "fontcolor=white:"
         "fontsize=22:"
         "x=35:"
         "y=668:"
         "borderw=2:"
         "bordercolor=black:"
-        f"enable='lte({cycle_expr},0) + gt({cycle_expr},20)'[v5_zem];"
+        f"enable='lte({cycle_expr},0) + gt({cycle_expr},25)'[v5_zem];"
 
         "[v4]drawtext="
         f"fontfile='{font}':"
-        f"text='HABERLER':"
+        "text='HABERLER':"
         "fontcolor=red:"
         "fontsize=22:"
         "x=28:"
@@ -229,16 +228,15 @@ def create_filter():
         "bordercolor=black:"
         f"enable='{active_expr}'[v5_haber];"
 
-        # İki metni birleştir
         "[v5_zem][v5_haber]overlay=0:0[v5];"
 
-        # KAYAN YAZI BANTI (Sadece 5 dakikada bir, 20 saniye boyunca görünür ve tamamen kaybolur)
+        # KAYAN YAZI BANTI (Sadece 5 dakikada bir, 25 saniye boyunca görünür)
         "[v5]drawbox="
         "x=280:y=640:w=1000:h=80:"
         "color=0x111827@0.94:t=fill:"
         f"enable='{active_expr}'[v6];"
 
-        # SAĞDAN SOLA KAYAN YAZI (Saatin üstüne asla taşmaz, bantla birlikte 5 dakikada bir gelip kaybolur)
+        # SAĞDAN SOLA KAYAN YAZI (clip_w=980 sayesinde saatin olduğu yere ASLA taşmaz, 280 sınırında kesilir)
         "[v6]drawtext="
         f"fontfile='{font}':"
         f"textfile='{ticker}':"
@@ -247,8 +245,9 @@ def create_filter():
         "fontsize=24:"
         "borderw=2:"
         "bordercolor=black:"
+        "x='1280 - (mod(t*100\\, 1200))':"
         "y=667:"
-        f"x='1280 - (mod({cycle_expr}*80\\, 1200))':"
+        "clip_w=980:"
         f"enable='{active_expr}'[vout]"
     )
 
@@ -266,11 +265,13 @@ def build_command():
         FFMPEG,
         "-hide_banner",
         "-loglevel", "info",
+        # M3U8 kopmalarını ve 1 dakika sonra kapanmayı önleyen kararlılık bayrakları:
+        "-fflags", "+genpts+discardcorrupt",
         "-reconnect", "1",
         "-reconnect_streamed", "1",
         "-reconnect_at_eof", "1",
         "-reconnect_delay_max", "10",
-        "-rw_timeout", "15000000",
+        "-rw_timeout", "20000000",
         "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140.0 Safari/537.36",
         "-referer", "https://playlist.fasttvcdn.com/",
         "-i", M3U8_URL,
