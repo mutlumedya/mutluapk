@@ -2,18 +2,34 @@
 
 import os
 import sys
-import time
 import subprocess
 import urllib.request
 from pathlib import Path
 from datetime import datetime
 import threading
 
+# ============================================================
+# GEREKLİ KÜTÜPHANELERİ OTOMATİK KONTROL ET VE İNDİR
+# ============================================================
+def install_and_import(package):
+    try:
+        __import__(package)
+    except ImportError:
+        print(f"Eksik kutuphane tespit edildi: {package}. Otomatik olarak indiriliyor...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+# Paketleri kontrol et ve yoksa indir
+install_and_import("feedparser")
+install_and_import("requests")
+
+import feedparser
+import requests
+
 
 # ============================================================
 # ZEM TV COCUK
 # M3U8 -> RTMP
-# LOGO (SAG UST) + DINAMIK ZEM TV/HABERLER + CANLI SAAT + INCE ALT BANT
+# OTOMATİK RSS HABERLERİ + CANLI ALTIN/GÜMÜŞ + İNCE BANT
 # ============================================================
 
 
@@ -33,7 +49,6 @@ LOGO_URL = (
 )
 
 FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"
-
 FONT = r"C:\Windows\Fonts\arial.ttf"
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -87,7 +102,58 @@ def write_file(path, text):
 
 
 # ============================================================
-# YAZILARI GUNCELLE
+# İNTERNETTEN CANLI HABER VE ALTIN/GÜMÜŞ ÇEKME
+# ============================================================
+
+def fetch_live_news_and_market():
+    headlines = []
+    
+    # RSS Üzerinden Son Haberleri Çek
+    rss_urls = [
+        "https://www.trthaber.com/sondakika.rss",
+        "https://www.cnnturk.com/feed/rss/news"
+    ]
+    
+    for url in rss_urls:
+        try:
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:10]:
+                title = entry.title.strip()
+                if title and title not in headlines:
+                    headlines.append(title)
+        except Exception as e:
+            log(f"RSS haber cekme hatasi ({url}): {e}")
+
+    # Yedek haberler
+    if not headlines:
+        headlines = [
+            "ZEM TV Çocuk kuşağı en sevilen çizgi filmlerle kesintisiz yayında.",
+            "Türkiye'nin dijital ekranında eğlence ve eğitim dolu saatler devam ediyor.",
+            "Minikler için yepyeni maceralar ve eğitici içerikler ekranlarda."
+        ]
+
+    # Altın ve Gümüş Fiyatlarını Çek
+    gold_price = "6.710,00 TL"
+    silver_price = "100,00 TL"
+    try:
+        res = requests.get("https://api.genelpara.com/embed/altin.json", timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            if "GA" in data:
+                gold_price = data["GA"].get("satis", "6.710,00 TL") + " TL"
+            if "AG" in data:
+                silver_price = data["AG"].get("satis", "100,00 TL") + " TL"
+    except:
+        pass
+
+    news_text = "   ***   ".join([f"{i+1}. {h}" for i, h in enumerate(headlines[:20])])
+    market_text = f"   |||   CANLI PİYASA -> Gram Altın: {gold_price}   |   Gram Gümüş: {silver_price}   |||   "
+    
+    return news_text + market_text
+
+
+# ============================================================
+# YAZILARI GÜNCELLEME DÖNGÜSÜ
 # ============================================================
 
 def update_text_files():
@@ -95,21 +161,11 @@ def update_text_files():
     date = now.strftime("%d.%m.%Y")
 
     info = "ZEM TV COCUK | CANLI YAYIN | " + date
-    ticker = (
-        "ZEM TV COCUK   |   "
-        "Keyifli seyirler   |   "
-        "ZEM MEDYA   |   "
-        "Turkiye'nin dijital yayini   |   "
-        "Guncel yayin"
-    )
+    ticker = fetch_live_news_and_market()
 
     write_file(INFO_FILE, info)
     write_file(TICKER_FILE, ticker)
 
-
-# ============================================================
-# DOSYALARI GUNCELLEME THREAD
-# ============================================================
 
 def text_update_loop():
     while True:
@@ -117,11 +173,13 @@ def text_update_loop():
             update_text_files()
         except Exception as e:
             log("Metin guncelleme hatasi: " + str(e))
-        time.sleep(1)
+        
+        # Her 5 dakikada bir internetten yeniler
+        time.sleep(300)
 
 
 # ============================================================
-# LOGO INDIR
+# LOGO İNDİR
 # ============================================================
 
 def download_logo():
@@ -166,7 +224,7 @@ def ff_path(path):
 
 
 # ============================================================
-# FFMPEG FILTER
+# FFMPEG FİLTRE
 # ============================================================
 
 def create_filter():
@@ -174,21 +232,14 @@ def create_filter():
     logo = ff_path(LOGO_FILE)
     ticker = ff_path(TICKER_FILE)
 
-    # 300 saniye = 5 dakika. Her 5 dakikada bir ilk 25 saniye bant aktif olacak.
     cycle_expr = "mod(t\\,300)"
-    active_expr = f"between({cycle_expr},0,25)"
+    active_expr = f"between({cycle_expr},0,35)"
 
     filter_text = (
-        # Ana videoyu standart 1280x720 boyutuna zorla ve formatı sabitle
         "[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2[base];"
-
-        # Logonun boyutunu ayarla
         "[1:v]scale=120:-1[logo];"
-
-        # LOGO SAĞ ÜST KÖŞE (20 piksel içeride)
         "[base][logo]overlay=W-w-20:20[v1];"
 
-        # 1. ALT BANT ZEMİNİ VE KAYAN YAZI (Yükseklik 50px, en altta y=670)
         "[v1]drawbox=x=270:y=670:w=1010:h=50:color=0x111827@0.94:t=fill:"
         f"enable='{active_expr}'[v_box];"
 
@@ -200,17 +251,13 @@ def create_filter():
         "fontsize=20:"
         "borderw=2:"
         "bordercolor=black:"
-        "x='1280 - mod(t*100\\, 1250)':"
+        "x='1280 - mod(t*85\\, 8000)':"
         "y=683:"
         f"enable='{active_expr}'[v_ticker];"
 
-        # 2. SOL KISIM ANA ZEMİN (Sabit w=130, y=670, h=50)
         "[v_ticker]drawbox=x=0:y=670:w=130:h=50:color=0x1f2937@1.0:t=fill[v2];"
-
-        # 3. SAAT KUTUSU (Sabit w=140, x=130, y=670, h=50) -> Yazının saatin üstüne geçmesini engeller
         "[v2]drawbox=x=130:y=670:w=140:h=50:color=0x374151@1.0:t=fill[v3];"
 
-        # 4. CANLI SAAT (Sabit)
         "[v3]drawtext="
         f"fontfile='{font}':"
         "text='%{localtime\\:%H\\\\\\:%M}':"
@@ -221,7 +268,6 @@ def create_filter():
         "borderw=2:"
         "bordercolor=black[v4];"
 
-        # 5. SOL KISIM METNİ: Bant yokken "ZEM TV", bant aktifken kırmızı "HABERLER"
         "[v4]drawtext="
         f"fontfile='{font}':"
         "text='ZEM TV':"
@@ -231,7 +277,7 @@ def create_filter():
         "y=685:"
         "borderw=2:"
         "bordercolor=black:"
-        f"enable='lte({cycle_expr},0) + gt({cycle_expr},25)'[v_text1];"
+        f"enable='lte({cycle_expr},0) + gt({cycle_expr},35)'[v_text1];"
 
         "[v_text1]drawtext="
         f"fontfile='{font}':"
@@ -259,7 +305,6 @@ def build_command():
         FFMPEG,
         "-hide_banner",
         "-loglevel", "info",
-        # Yayın kopmalarını ve 1 dakika sonra kapanmayı önleyen kararlılık bayrakları:
         "-fflags", "+genpts+discardcorrupt",
         "-reconnect", "1",
         "-reconnect_streamed", "1",
@@ -299,7 +344,7 @@ def build_command():
 
 
 # ============================================================
-# KONTROL VE BASLATMA
+# KONTROL VE BAŞLATMA
 # ============================================================
 
 def check_files():
@@ -345,9 +390,10 @@ def start_stream():
         return -1
 
 def main():
-    print("\nZEM TV COCUK - Yayin Sistemi Baslatiliyor...\n")
+    print("\nZEM TV COCUK - Canli Otomatik Haber & Piyasa Sistemi Baslatiliyor...\n")
     check_files()
     download_logo()
+    
     update_text_files()
 
     updater = threading.Thread(target=text_update_loop, daemon=True)
