@@ -8,194 +8,219 @@ import urllib.request
 from pathlib import Path
 from datetime import datetime
 
+
 # ============================================================
 # ZEM TV COCUK
-# M3U8 -> FFmpeg -> RTMP
+# M3U8 -> RTMP
 # LOGO + SAAT + BILGI + KAYAN YAZI
 # ============================================================
 
-M3U8_URL = (
-    "https://playlist.fasttvcdn.com/pl/"
-    "rfrk9821hdy9dayo8wfyha/"
-    "cizgi-film-tv/playlist/0.m3u8"
-)
+M3U8_URL = "https://playlist.fasttvcdn.com/pl/rfrk9821hdy9dayo8wfyha/cizgi-film-tv/playlist/0.m3u8"
 
-RTMP_URL = (
-    "rtmp://ssh101.bozztv.com:1935/"
-    "ssh101/zemtvcocuk"
-)
+RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101/zemtvcocuk"
 
-LOGO_URL = (
-    "https://raw.githubusercontent.com/"
-    "mutlumedya/cine/refs/heads/main/telegram.png"
-)
+LOGO_URL = "https://raw.githubusercontent.com/mutlumedya/cine/refs/heads/main/telegram.png"
 
 FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"
+
 FONT = r"C:\Windows\Fonts\arial.ttf"
 
-BASE = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent
 
-LOGO = BASE / "zemtv_logo.png"
-CLOCK = BASE / "clock.txt"
-INFO = BASE / "info.txt"
-TICKER = BASE / "ticker.txt"
+LOGO_FILE = BASE_DIR / "zemtv_logo.png"
+CLOCK_FILE = BASE_DIR / "zemtv_clock.txt"
+INFO_FILE = BASE_DIR / "zemtv_info.txt"
+TICKER_FILE = BASE_DIR / "zemtv_ticker.txt"
+
+
+# ============================================================
+# YAYIN AYARLARI
+# ============================================================
 
 WIDTH = 1280
 HEIGHT = 720
 FPS = 25
 
+VIDEO_BITRATE = "3000k"
+MAXRATE = "3500k"
+BUFSIZE = "6000k"
+
+AUDIO_BITRATE = "128k"
+
+
 # ============================================================
-# YARDIMCI
+# LOG
 # ============================================================
 
-def yaz(mesaj):
-    saat = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-    print(f"[{saat}] {mesaj}", flush=True)
+def log(text):
+    now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    print(f"[{now}] {text}", flush=True)
 
 
-def dosya_yaz(dosya, metin):
-    gecici = Path(str(dosya) + ".tmp")
+# ============================================================
+# DOSYA YAZ
+# ============================================================
+
+def write_file(path, text):
+
+    temp = Path(str(path) + ".tmp")
 
     try:
-        with open(gecici, "w", encoding="utf-8") as f:
-            f.write(metin)
 
-        os.replace(gecici, dosya)
+        with open(temp, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+        os.replace(temp, path)
 
     except Exception as e:
-        print("Dosya yazma hatasi:", e)
+
+        try:
+            if temp.exists():
+                temp.unlink()
+        except:
+            pass
+
+        log("Dosya yazma hatasi: " + str(e))
 
 
-def overlay_guncelle():
+# ============================================================
+# EKRAN BILGILERI
+# ============================================================
 
-    simdi = datetime.now()
+def update_text_files():
 
-    saat = simdi.strftime("%H:%M:%S")
-    tarih = simdi.strftime("%d.%m.%Y")
+    now = datetime.now()
 
-    dosya_yaz(
-        CLOCK,
-        saat
+    clock = now.strftime("%H:%M:%S")
+
+    date = now.strftime("%d.%m.%Y")
+
+    info = (
+        "ZEM TV COCUK   |   CANLI YAYIN   |   "
+        + date
     )
 
-    dosya_yaz(
-        INFO,
-        "ZEM TV COCUK  |  CANLI YAYIN  |  " + tarih
+    ticker = (
+        "ZEM TV COCUK   |   Keyifli seyirler   |   "
+        "ZEM MEDYA   |   Turkiye'nin dijital yayini"
     )
 
-    dosya_yaz(
-        TICKER,
-        "ZEM TV COCUK  |  Keyifli seyirler  |  "
-        "ZEM MEDYA  |  Turkiye'nin dijital yayini"
-    )
+    write_file(CLOCK_FILE, clock)
+
+    write_file(INFO_FILE, info)
+
+    write_file(TICKER_FILE, ticker)
 
 
 # ============================================================
 # LOGO
 # ============================================================
 
-def logo_indir():
+def download_logo():
 
-    if LOGO.exists():
+    if LOGO_FILE.exists():
+
         try:
-            if LOGO.stat().st_size > 1000:
-                yaz("Logo mevcut.")
+
+            if LOGO_FILE.stat().st_size > 1000:
+
+                log("Logo mevcut.")
+
                 return
+
         except:
             pass
 
-    yaz("Logo indiriliyor...")
+    log("Logo indiriliyor...")
 
     try:
 
-        req = urllib.request.Request(
+        request = urllib.request.Request(
             LOGO_URL,
             headers={
                 "User-Agent": "Mozilla/5.0"
             }
         )
 
-        with urllib.request.urlopen(req, timeout=30) as cevap:
+        with urllib.request.urlopen(
+            request,
+            timeout=30
+        ) as response:
 
-            veri = cevap.read()
+            data = response.read()
 
-        if len(veri) < 1000:
-            raise Exception("Logo dosyasi gecersiz.")
+        if len(data) < 1000:
 
-        with open(LOGO, "wb") as f:
-            f.write(veri)
+            raise Exception(
+                "Logo dosyasi gecersiz."
+            )
 
-        yaz("Logo indirildi.")
+        with open(LOGO_FILE, "wb") as f:
+
+            f.write(data)
+
+        log("Logo indirildi.")
 
     except Exception as e:
 
-        yaz("Logo indirilemedi: " + str(e))
-
-        # Logo olmazsa bos PNG olusturulamaz.
-        # Bu nedenle mevcut logo yoksa dur.
-        sys.exit(1)
-
-
-# ============================================================
-# FFmpeg KONTROL
-# ============================================================
-
-def kontrol():
-
-    if not os.path.isfile(FFMPEG):
-
-        print("")
-        print("FFmpeg bulunamadi:")
-        print(FFMPEG)
-        print("")
-
-        sys.exit(1)
-
-    if not os.path.isfile(FONT):
-
-        print("")
-        print("Arial font bulunamadi:")
-        print(FONT)
-        print("")
+        log(
+            "Logo indirilemedi: "
+            + str(e)
+        )
 
         sys.exit(1)
 
 
 # ============================================================
-# FILTER
+# FILTER YOL HAZIRLAMA
 # ============================================================
 
-def filter_olustur():
+def ff_path(path):
 
-    logo = str(LOGO).replace("\\", "/")
-    font = str(FONT).replace("\\", "/")
-    clock = str(CLOCK).replace("\\", "/")
-    info = str(INFO).replace("\\", "/")
-    ticker = str(TICKER).replace("\\", "/")
+    value = str(path)
 
-    # Windows C: isaretlerini FFmpeg filter icin kacir
-    logo = logo.replace(":", "\\:")
-    font = font.replace(":", "\\:")
-    clock = clock.replace(":", "\\:")
-    info = info.replace(":", "\\:")
-    ticker = ticker.replace(":", "\\:")
+    value = value.replace("\\", "/")
 
-    # ========================================================
-    # DIKKAT:
-    # W / H KULLANILMIYOR.
-    # SENIN FFmpeg SURUMUNDE DRAWBOX BUNU HATA VERIYORDU.
-    # ========================================================
+    value = value.replace(":", "\\:")
 
-    filtre = (
+    return value
+
+
+# ============================================================
+# FFMPEG FILTRE
+#
+# ONEMLI:
+#
+# DRAWBOX YOK.
+# W YOK.
+# H YOK.
+# H-106 YOK.
+#
+# ============================================================
+
+def create_filter():
+
+    font = ff_path(FONT)
+
+    logo = ff_path(LOGO_FILE)
+
+    clock = ff_path(CLOCK_FILE)
+
+    info = ff_path(INFO_FILE)
+
+    ticker = ff_path(TICKER_FILE)
+
+
+    filter_text = (
 
         # ----------------------------------------------------
-        # LOGO
+        # LOGO BOYUTU
         # ----------------------------------------------------
 
         "[1:v]"
-        "scale=150:-1,"
-        "format=rgba"
+        "scale=150:-1"
         "[logo];"
+
 
         # ----------------------------------------------------
         # LOGO SAG UST
@@ -204,6 +229,7 @@ def filter_olustur():
         "[0:v][logo]"
         "overlay=1110:20"
         "[v1];"
+
 
         # ----------------------------------------------------
         # SAAT SOL UST
@@ -216,97 +242,77 @@ def filter_olustur():
         "reload=1:"
         "fontsize=30:"
         "fontcolor=white:"
-        "box=1:"
-        "boxcolor=black@0.65:"
-        "boxborderw=8:"
+        "borderw=3:"
+        "bordercolor=black:"
         "x=20:"
         "y=20"
         "[v2];"
 
+
         # ----------------------------------------------------
-        # BILGI BAR
-        # 720 - 106 = 614
+        # BILGI
         # ----------------------------------------------------
 
         "[v2]"
-        "drawbox="
-        "x=0:"
-        "y=614:"
-        "w=1280:"
-        "h=58:"
-        "color=black@0.78:"
-        "t=fill"
+        "drawtext="
+        f"fontfile='{font}':"
+        f"textfile='{info}':"
+        "reload=1:"
+        "fontsize=25:"
+        "fontcolor=white:"
+        "borderw=4:"
+        "bordercolor=black:"
+        "x=25:"
+        "y=625"
         "[v3];"
 
+
         # ----------------------------------------------------
-        # BILGI YAZISI
+        # KAYAN YAZI
+        #
+        # SABIT 1280 KULLANIYORUZ.
+        # W / H KULLANILMIYOR.
         # ----------------------------------------------------
 
         "[v3]"
         "drawtext="
         f"fontfile='{font}':"
-        f"textfile='{info}':"
-        "reload=1:"
-        "fontsize=24:"
-        "fontcolor=white:"
-        "x=25:"
-        "y=630"
-        "[v4];"
-
-        # ----------------------------------------------------
-        # KAYAN YAZI BAR
-        # 720 - 48 = 672
-        # ----------------------------------------------------
-
-        "[v4]"
-        "drawbox="
-        "x=0:"
-        "y=672:"
-        "w=1280:"
-        "h=48:"
-        "color=black@0.92:"
-        "t=fill"
-        "[v5];"
-
-        # ----------------------------------------------------
-        # KAYAN YAZI
-        #
-        # 1280 sabit kullaniliyor.
-        # W KULLANILMIYOR.
-        # ----------------------------------------------------
-
-        "[v5]"
-        "drawtext="
-        f"fontfile='{font}':"
         f"textfile='{ticker}':"
         "reload=1:"
-        "fontsize=25:"
+        "fontsize=26:"
         "fontcolor=white:"
-        "x=mod(1280-n*0.0-t*150\\,1600)-tw:"
-        "y=684"
+        "borderw=4:"
+        "bordercolor=black:"
+        "x=1280-mod(t*120\\,1700):"
+        "y=680"
         "[vout]"
+
     )
 
-    return filtre
+    return filter_text
 
 
 # ============================================================
-# FFmpeg KOMUTU
+# FFMPEG KOMUTU
 # ============================================================
 
-def komut():
+def build_command():
 
-    filtre = filter_olustur()
+    filters = create_filter()
 
-    return [
+    command = [
 
         FFMPEG,
 
         "-hide_banner",
 
-        # ----------------------------------------------------
-        # M3U8 BAGLANTI
-        # ----------------------------------------------------
+        "-loglevel",
+        "info",
+
+
+        # ====================================================
+        # M3U8 BAGLANTISI
+        # ====================================================
 
         "-reconnect",
         "1",
@@ -333,33 +339,32 @@ def komut():
         "-i",
         M3U8_URL,
 
-        # ----------------------------------------------------
+
+        # ====================================================
         # LOGO
-        # ----------------------------------------------------
+        # ====================================================
 
         "-loop",
         "1",
 
         "-i",
-        str(LOGO),
+        str(LOGO_FILE),
 
-        # ----------------------------------------------------
-        # FILTRE
-        # ----------------------------------------------------
+
+        # ====================================================
+        # FILTER
+        # ====================================================
 
         "-filter_complex",
-        filtre,
+        filters,
 
-        # ----------------------------------------------------
+
+        # ====================================================
         # VIDEO
-        # ----------------------------------------------------
+        # ====================================================
 
         "-map",
         "[vout]",
-
-        # ----------------------------------------------------
-        # SES
-        # ----------------------------------------------------
 
         "-map",
         "0:a?",
@@ -377,19 +382,19 @@ def komut():
         "yuv420p",
 
         "-r",
-        str(FPS),
+        "25",
 
         "-s",
         "1280x720",
 
         "-b:v",
-        "3000k",
+        VIDEO_BITRATE,
 
         "-maxrate",
-        "3500k",
+        MAXRATE,
 
         "-bufsize",
-        "6000k",
+        BUFSIZE,
 
         "-g",
         "50",
@@ -400,15 +405,16 @@ def komut():
         "-sc_threshold",
         "0",
 
-        # ----------------------------------------------------
+
+        # ====================================================
         # AUDIO
-        # ----------------------------------------------------
+        # ====================================================
 
         "-c:a",
         "aac",
 
         "-b:a",
-        "128k",
+        AUDIO_BITRATE,
 
         "-ar",
         "48000",
@@ -416,24 +422,55 @@ def komut():
         "-ac",
         "2",
 
-        # ----------------------------------------------------
+
+        # ====================================================
         # RTMP
-        # ----------------------------------------------------
+        # ====================================================
 
         "-f",
         "flv",
 
         RTMP_URL
+
     ]
 
+    return command
+
 
 # ============================================================
-# YAYIN
+# KONTROL
 # ============================================================
 
-def yayin_baslat():
+def check_files():
 
-    cmd = komut()
+    if not os.path.isfile(FFMPEG):
+
+        print("")
+        print("FFmpeg bulunamadi:")
+        print(FFMPEG)
+        print("")
+
+        sys.exit(1)
+
+
+    if not os.path.isfile(FONT):
+
+        print("")
+        print("Arial bulunamadi:")
+        print(FONT)
+        print("")
+
+        sys.exit(1)
+
+
+# ============================================================
+# YAYIN BASLAT
+# ============================================================
+
+def start_stream():
+
+    command = build_command()
+
 
     print("")
     print("================================================")
@@ -441,23 +478,30 @@ def yayin_baslat():
     print("================================================")
     print("LOGO       : AKTIF")
     print("SAAT       : AKTIF")
-    print("BILGI BAR  : AKTIF")
+    print("BILGI      : AKTIF")
     print("KAYAN YAZI : AKTIF")
     print("================================================")
     print("")
-    print("M3U8:")
+
+
+    log("FFmpeg baslatiliyor.")
+
+    log("Kaynak:")
     print(M3U8_URL)
-    print("")
-    print("RTMP:")
+
+    log("RTMP:")
     print(RTMP_URL)
+
     print("")
-    print("FFmpeg baslatiliyor...")
-    print("")
+
+
+    process = None
+
 
     try:
 
-        p = subprocess.Popen(
-            cmd,
+        process = subprocess.Popen(
+            command,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
@@ -467,73 +511,107 @@ def yayin_baslat():
             bufsize=1
         )
 
-        son_guncelleme = 0
+
+        last_update = 0
+
 
         while True:
 
-            satir = p.stdout.readline()
+            line = process.stdout.readline()
 
-            if satir:
-                print(satir.rstrip(), flush=True)
 
-            simdi = time.time()
+            if line:
 
-            if simdi - son_guncelleme >= 1:
+                print(
+                    line.rstrip(),
+                    flush=True
+                )
 
-                overlay_guncelle()
 
-                son_guncelleme = simdi
+            current = time.time()
 
-            if p.poll() is not None:
+
+            if current - last_update >= 1:
+
+                update_text_files()
+
+                last_update = current
+
+
+            if process.poll() is not None:
+
                 break
 
-        return p.returncode
+
+        return process.returncode
+
 
     except KeyboardInterrupt:
 
-        yaz("Yayin durduruldu.")
+        log("Yayin durduruluyor...")
 
-        try:
-            p.terminate()
-        except:
-            pass
+        if process:
+
+            try:
+                process.terminate()
+            except:
+                pass
 
         return 0
 
+
     except Exception as e:
 
-        yaz("Calistirma hatasi: " + str(e))
+        log(
+            "FFmpeg calistirma hatasi: "
+            + str(e)
+        )
 
         return -1
 
 
 # ============================================================
-# ANA
+# ANA SISTEM
 # ============================================================
 
 def main():
 
     print("")
-    print("ZEM TV COCUK YAYIN SISTEMI")
+    print("ZEM TV COCUK")
+    print("Yayin sistemi baslatiliyor...")
     print("")
 
-    kontrol()
 
-    logo_indir()
+    check_files()
 
-    overlay_guncelle()
+    download_logo()
+
+    update_text_files()
+
 
     while True:
 
-        kod = yayin_baslat()
+        code = start_stream()
 
-        if kod == 0:
+
+        if code == 0:
+
+            log(
+                "Yayin normal olarak durduruldu."
+            )
+
             break
 
-        yaz(
-            "FFmpeg kapandi. "
-            "5 saniye sonra yeniden baglanilacak."
+
+        log(
+            "FFmpeg kapandi. Kod: "
+            + str(code)
         )
+
+        log(
+            "5 saniye sonra yeniden baglanacak."
+        )
+
 
         for i in range(5, 0, -1):
 
@@ -547,10 +625,16 @@ def main():
 
             time.sleep(1)
 
+
         print("")
 
-        overlay_guncelle()
+        update_text_files()
 
+
+# ============================================================
+# CALISTIR
+# ============================================================
 
 if __name__ == "__main__":
+
     main()
