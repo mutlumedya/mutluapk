@@ -236,7 +236,7 @@ def create_filter():
         "color=0x111827@0.94:t=fill:"
         f"enable='{active_expr}'[v6];"
 
-        # SAĞDAN SOLA KAYAN YAZI (clip_w=980 sayesinde saatin olduğu yere ASLA taşmaz, 280 sınırında kesilir)
+        # SAĞDAN SOLA KAYAN YAZI (Saatin üstüne asla taşmaz, x 280'den küçük olamaz)
         "[v6]drawtext="
         f"fontfile='{font}':"
         f"textfile='{ticker}':"
@@ -245,9 +245,8 @@ def create_filter():
         "fontsize=24:"
         "borderw=2:"
         "bordercolor=black:"
-        "x='1280 - (mod(t*100\\, 1200))':"
+        "x='max(290, 1280 - mod(t*100\\, 1250))':"
         "y=667:"
-        "clip_w=980:"
         f"enable='{active_expr}'[vout]"
     )
 
@@ -265,7 +264,7 @@ def build_command():
         FFMPEG,
         "-hide_banner",
         "-loglevel", "info",
-        # M3U8 kopmalarını ve 1 dakika sonra kapanmayı önleyen kararlılık bayrakları:
+        # M3U8 kopmalarını önleyen kararlılık bayrakları:
         "-fflags", "+genpts+discardcorrupt",
         "-reconnect", "1",
         "-reconnect_streamed", "1",
