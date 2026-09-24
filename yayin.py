@@ -13,7 +13,7 @@ import threading
 # ============================================================
 # ZEM TV COCUK
 # M3U8 -> RTMP
-# LOGO + ALT BILGI + CANLI SAAT + SOLDAN SAG'A KAYAN YAZI
+# LOGO (SAG UST) + ALT BILGI + CANLI SAAT + KAYAN YAZI
 # ============================================================
 
 
@@ -59,33 +59,12 @@ AUDIO_BITRATE = "128k"
 
 
 # ============================================================
-# ALT BANT AYARLARI
-# ============================================================
-
-BAND_Y = 640
-BAND_H = 80
-
-INFO_W = 150
-CLOCK_W = 130
-
-TICKER_X = INFO_W + CLOCK_W
-TICKER_W = WIDTH - TICKER_X
-
-TICKER_SPEED = 120
-
-
-# ============================================================
 # LOG
 # ============================================================
 
 def log(text):
-
     now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-
-    print(
-        f"[{now}] {text}",
-        flush=True
-    )
+    print(f"[{now}] {text}", flush=True)
 
 
 # ============================================================
@@ -93,39 +72,18 @@ def log(text):
 # ============================================================
 
 def write_file(path, text):
-
     temp = Path(str(path) + ".tmp")
-
     try:
-
-        with open(
-            temp,
-            "w",
-            encoding="utf-8",
-            newline="\n"
-        ) as f:
-
+        with open(temp, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
-
-        os.replace(
-            temp,
-            path
-        )
-
+        os.replace(temp, path)
     except Exception as e:
-
         try:
-
             if temp.exists():
                 temp.unlink()
-
         except:
             pass
-
-        log(
-            "Dosya yazma hatasi: "
-            + str(e)
-        )
+        log("Dosya yazma hatasi: " + str(e))
 
 
 # ============================================================
@@ -133,18 +91,10 @@ def write_file(path, text):
 # ============================================================
 
 def update_text_files():
-
     now = datetime.now()
+    date = now.strftime("%d.%m.%Y")
 
-    date = now.strftime(
-        "%d.%m.%Y"
-    )
-
-    info = (
-        "ZEM TV COCUK | CANLI YAYIN | "
-        + date
-    )
-
+    info = "ZEM TV COCUK | CANLI YAYIN | " + date
     ticker = (
         "ZEM TV COCUK   |   "
         "Keyifli seyirler   |   "
@@ -153,15 +103,8 @@ def update_text_files():
         "Guncel yayin"
     )
 
-    write_file(
-        INFO_FILE,
-        info
-    )
-
-    write_file(
-        TICKER_FILE,
-        ticker
-    )
+    write_file(INFO_FILE, info)
+    write_file(TICKER_FILE, ticker)
 
 
 # ============================================================
@@ -169,20 +112,11 @@ def update_text_files():
 # ============================================================
 
 def text_update_loop():
-
     while True:
-
         try:
-
             update_text_files()
-
         except Exception as e:
-
-            log(
-                "Metin guncelleme hatasi: "
-                + str(e)
-            )
-
+            log("Metin guncelleme hatasi: " + str(e))
         time.sleep(1)
 
 
@@ -191,74 +125,32 @@ def text_update_loop():
 # ============================================================
 
 def download_logo():
-
     if LOGO_FILE.exists():
-
         try:
-
             if LOGO_FILE.stat().st_size > 1000:
-
-                log(
-                    "Logo mevcut."
-                )
-
+                log("Logo mevcut.")
                 return
-
         except:
             pass
 
-
-    log(
-        "Logo indiriliyor..."
-    )
-
-
+    log("Logo indiriliyor...")
     try:
-
         request = urllib.request.Request(
             LOGO_URL,
-            headers={
-                "User-Agent":
-                "Mozilla/5.0"
-            }
+            headers={"User-Agent": "Mozilla/5.0"}
         )
-
-
-        with urllib.request.urlopen(
-            request,
-            timeout=30
-        ) as response:
-
+        with urllib.request.urlopen(request, timeout=30) as response:
             data = response.read()
 
-
         if len(data) < 1000:
+            raise Exception("Logo dosyasi gecersiz.")
 
-            raise Exception(
-                "Logo dosyasi gecersiz."
-            )
-
-
-        with open(
-            LOGO_FILE,
-            "wb"
-        ) as f:
-
+        with open(LOGO_FILE, "wb") as f:
             f.write(data)
 
-
-        log(
-            "Logo indirildi."
-        )
-
-
+        log("Logo indirildi.")
     except Exception as e:
-
-        log(
-            "Logo indirilemedi: "
-            + str(e)
-        )
-
+        log("Logo indirilemedi: " + str(e))
         sys.exit(1)
 
 
@@ -267,19 +159,9 @@ def download_logo():
 # ============================================================
 
 def ff_path(path):
-
     value = str(path)
-
-    value = value.replace(
-        "\\",
-        "/"
-    )
-
-    value = value.replace(
-        ":",
-        "\\:"
-    )
-
+    value = value.replace("\\", "/")
+    value = value.replace(":", "\\:")
     return value
 
 
@@ -288,162 +170,62 @@ def ff_path(path):
 # ============================================================
 
 def create_filter():
-
     font = ff_path(FONT)
-
     logo = ff_path(LOGO_FILE)
-
     ticker = ff_path(TICKER_FILE)
 
-
     filter_text = (
+        # Ana videoyu standart 1280x720 boyutuna zorla ve formatı sabitle
+        "[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2[base];"
 
-        # ====================================================
-        # LOGO
-        # ====================================================
+        # Logonun boyutunu ayarla
+        "[1:v]scale=120:-1[logo];"
 
-        "[1:v]"
-        "scale=150:-1"
-        "[logo];"
+        # LOGO SAĞ ÜST KÖŞE (20 piksel içeride)
+        "[base][logo]overlay=W-w-20:20[v1];"
 
+        # ALT BANT ANA ZEMİN (En altta 640-720 arası)
+        "[v1]drawbox=x=0:y=640:w=1280:h=80:color=0x111827@0.94:t=fill[v2];"
 
-        # ====================================================
-        # LOGO SOL UST
-        # ====================================================
+        # BİLGİ KUTUSU (Sol kısım)
+        "[v2]drawbox=x=0:y=640:w=150:h=80:color=0x1f2937@1.0:t=fill[v3];"
 
-        "[0:v][logo]"
-        "overlay=20:20"
-        "[v1];"
+        # SAAT KUTUSU (Bilgiden hemen sonra)
+        "[v3]drawbox=x=150:y=640:w=130:h=80:color=0x374151@1.0:t=fill[v4];"
 
-
-        # ====================================================
-        # ALT BANT ANA ZEMIN
-        # ====================================================
-
-        "[v1]"
-        "drawbox="
-        "x=0:"
-        "y=640:"
-        "w=1280:"
-        "h=80:"
-        "color=0x111827@0.94:"
-        "t=fill"
-        "[v2];"
-
-
-        # ====================================================
-        # BILGI KUTUSU
-        # ====================================================
-
-        "[v2]"
-        "drawbox="
-        "x=0:"
-        "y=640:"
-        "w=150:"
-        "h=80:"
-        "color=0x1f2937@1.0:"
-        "t=fill"
-        "[v3];"
-
-
-        # ====================================================
-        # SAAT KUTUSU
-        # ====================================================
-
-        "[v3]"
-        "drawbox="
-        "x=150:"
-        "y=640:"
-        "w=130:"
-        "h=80:"
-        "color=0x374151@1.0:"
-        "t=fill"
-        "[v4];"
-
-
-        # ====================================================
-        # BILGI YAZISI
-        # ====================================================
-
-        "[v4]"
-        "drawtext="
+        # "BİLGİ" METNİ
+        "[v4]drawtext="
         f"fontfile='{font}':"
         "text='BILGI':"
         "fontcolor=white:"
-        "fontsize=25:"
-        "x=42:"
-        "y=666:"
+        "fontsize=22:"
+        "x=45:"
+        "y=668:"
         "borderw=2:"
-        "bordercolor=black"
-        "[v5];"
+        "bordercolor=black[v5];"
 
-
-        # ====================================================
-        # CANLI TURKIYE SAATI
-        #
-        # FFmpeg kendi saatini kullanir.
-        # Python dosyasina bagli degildir.
-        # ====================================================
-
-        "[v5]"
-        "drawtext="
+        # CANLI SAAT
+        "[v5]drawtext="
         f"fontfile='{font}':"
         "text='%{localtime\\:%H\\\\\\:%M}':"
         "fontcolor=white:"
-        "fontsize=28:"
-        "x=181:"
-        "y=664:"
+        "fontsize=26:"
+        "x=182:"
+        "y=666:"
         "borderw=2:"
-        "bordercolor=black"
-        "[v6];"
+        "bordercolor=black[v6];"
 
-
-        # ====================================================
-        # KAYAN YAZI
-        #
-        # SADECE X=280'DEN BASLAR.
-        #
-        # SOLDAN SAG'A:
-        #
-        # 280 - tw
-        #       |
-        #       V
-        #      >>>>>>>>>>>>>>
-        #                    |
-        #                    V
-        #                  1280
-        #
-        # Boylece saat kutusunun icine girmez.
-        # ====================================================
-
-        "[v6]"
-        "drawtext="
+        # SAĞDAN SOLA KAYAN YAZI (Ticker)
+        "[v6]drawtext="
         f"fontfile='{font}':"
         f"textfile='{ticker}':"
         "reload=1:"
         "fontcolor=white:"
-        "fontsize=26:"
+        "fontsize=24:"
         "borderw=2:"
         "bordercolor=black:"
-        "y=665:"
-        "x='280-tw+mod(t*120\\,1000+tw)'"
-        "[v7];"
-
-
-        # ====================================================
-        # KAYAN YAZI ICIN SAGDAN TASMA ENGELI
-        # ====================================================
-
-        "[v7]"
-        "drawbox="
-        "x=1280:"
-        "y=640:"
-        "w=1:"
-        "h=80:"
-        "color=0x111827@0:"
-        "t=fill"
-        "[vout]"
-
+        "y=667:"
+        "x='w-mod(t*100\\,w+tw)'[vout]"
     )
 
     return filter_text
@@ -454,439 +236,112 @@ def create_filter():
 # ============================================================
 
 def build_command():
-
     filters = create_filter()
 
-
     command = [
-
         FFMPEG,
-
         "-hide_banner",
-
-        "-loglevel",
-        "info",
-
-
-        # ====================================================
-        # M3U8 BAGLANTI
-        # ====================================================
-
-        "-reconnect",
-        "1",
-
-        "-reconnect_streamed",
-        "1",
-
-        "-reconnect_at_eof",
-        "1",
-
-        "-reconnect_delay_max",
-        "10",
-
-        "-rw_timeout",
-        "15000000",
-
-        "-user_agent",
-
-        "Mozilla/5.0 "
-        "(Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 "
-        "Chrome/140.0 Safari/537.36",
-
-        "-referer",
-
-        "https://playlist.fasttvcdn.com/",
-
-        "-i",
-
-        M3U8_URL,
-
-
-        # ====================================================
-        # LOGO
-        # ====================================================
-
-        "-loop",
-        "1",
-
-        "-i",
-
-        str(LOGO_FILE),
-
-
-        # ====================================================
-        # FILTER
-        # ====================================================
-
-        "-filter_complex",
-
-        filters,
-
-
-        # ====================================================
-        # VIDEO MAP
-        # ====================================================
-
-        "-map",
-
-        "[vout]",
-
-        "-map",
-
-        "0:a?",
-
-
-        # ====================================================
-        # VIDEO
-        # ====================================================
-
-        "-c:v",
-
-        "libx264",
-
-        "-preset",
-
-        "veryfast",
-
-        "-tune",
-
-        "zerolatency",
-
-        "-pix_fmt",
-
-        "yuv420p",
-
-        "-r",
-
-        str(FPS),
-
-        "-s",
-
-        "1280x720",
-
-        "-b:v",
-
-        VIDEO_BITRATE,
-
-        "-maxrate",
-
-        MAXRATE,
-
-        "-bufsize",
-
-        BUFSIZE,
-
-        "-g",
-
-        "50",
-
-        "-keyint_min",
-
-        "50",
-
-        "-sc_threshold",
-
-        "0",
-
-
-        # ====================================================
-        # AUDIO
-        # ====================================================
-
-        "-c:a",
-
-        "aac",
-
-        "-b:a",
-
-        AUDIO_BITRATE,
-
-        "-ar",
-
-        "48000",
-
-        "-ac",
-
-        "2",
-
-
-        # ====================================================
-        # RTMP
-        # ====================================================
-
-        "-f",
-
-        "flv",
-
-        "-flvflags",
-
-        "no_duration_filesize",
-
+        "-loglevel", "info",
+        "-reconnect", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_at_eof", "1",
+        "-reconnect_delay_max", "10",
+        "-rw_timeout", "15000000",
+        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140.0 Safari/537.36",
+        "-referer", "https://playlist.fasttvcdn.com/",
+        "-i", M3U8_URL,
+        "-loop", "1",
+        "-i", str(LOGO_FILE),
+        "-filter_complex", filters,
+        "-map", "[vout]",
+        "-map", "0:a?",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-tune", "zerolatency",
+        "-pix_fmt", "yuv420p",
+        "-r", str(FPS),
+        "-s", "1280x720",
+        "-b:v", VIDEO_BITRATE,
+        "-maxrate", MAXRATE,
+        "-bufsize", BUFSIZE,
+        "-g", "50",
+        "-keyint_min", "50",
+        "-sc_threshold", "0",
+        "-c:a", "aac",
+        "-b:a", AUDIO_BITRATE,
+        "-ar", "48000",
+        "-ac", "2",
+        "-f", "flv",
+        "-flvflags", "no_duration_filesize",
         RTMP_URL
-
     ]
-
 
     return command
 
 
 # ============================================================
-# KONTROL
+# KONTROL VE BASLATMA
 # ============================================================
 
 def check_files():
-
     if not os.path.isfile(FFMPEG):
-
-        print("")
-        print(
-            "FFmpeg bulunamadi:"
-        )
-        print(FFMPEG)
-        print("")
-
+        print(f"\nFFmpeg bulunamadi:\n{FFMPEG}\n")
         sys.exit(1)
-
-
     if not os.path.isfile(FONT):
-
-        print("")
-        print(
-            "Arial bulunamadi:"
-        )
-        print(FONT)
-        print("")
-
+        print(f"\nArial bulunamadi:\n{FONT}\n")
         sys.exit(1)
-
-
-# ============================================================
-# YAYIN BASLAT
-# ============================================================
 
 def start_stream():
-
     command = build_command()
-
-
-    print("")
-    print(
-        "================================================"
-    )
-    print(
-        "              ZEM TV COCUK"
-    )
-    print(
-        "================================================"
-    )
-    print(
-        "LOGO       : SOL UST"
-    )
-    print(
-        "BILGI      : ALT SOL"
-    )
-    print(
-        "SAAT       : ALT ORTA"
-    )
-    print(
-        "KAYAN YAZI : ALT SAG - SOLDAN SAG'A"
-    )
-    print(
-        "================================================"
-    )
-    print("")
-
-
-    log(
-        "FFmpeg baslatiliyor."
-    )
-
-    log(
-        "Kaynak:"
-    )
-
-    print(
-        M3U8_URL
-    )
-
-    log(
-        "RTMP:"
-    )
-
-    print(
-        RTMP_URL
-    )
-
-    print("")
-
-
+    log("FFmpeg baslatiliyor.")
     process = None
-
-
     try:
-
         process = subprocess.Popen(
-
             command,
-
             stdout=subprocess.PIPE,
-
             stderr=subprocess.STDOUT,
-
             stdin=subprocess.DEVNULL,
-
             text=True,
-
             encoding="utf-8",
-
             errors="replace",
-
             bufsize=1
-
         )
-
-
         while True:
-
             line = process.stdout.readline()
-
-
             if line:
-
-                print(
-                    line.rstrip(),
-                    flush=True
-                )
-
-
+                print(line.rstrip(), flush=True)
             if process.poll() is not None:
-
                 break
-
-
         return process.returncode
-
-
     except KeyboardInterrupt:
-
-        log(
-            "Yayin durduruluyor..."
-        )
-
-
+        log("Yayin durduruluyor...")
         if process:
-
             try:
-
                 process.terminate()
-
             except:
                 pass
-
-
         return 0
-
-
     except Exception as e:
-
-        log(
-            "FFmpeg calistirma hatasi: "
-            + str(e)
-        )
-
+        log("FFmpeg calistirma hatasi: " + str(e))
         return -1
 
-
-# ============================================================
-# ANA SISTEM
-# ============================================================
-
 def main():
-
-    print("")
-    print(
-        "ZEM TV COCUK"
-    )
-    print(
-        "Yayin sistemi baslatiliyor..."
-    )
-    print("")
-
-
+    print("\nZEM TV COCUK - Yayin Sistemi Baslatiliyor...\n")
     check_files()
-
     download_logo()
-
     update_text_files()
 
-
-    # ========================================================
-    # YAZILARI SUREKLI GUNCELLEYEN THREAD
-    # ========================================================
-
-    updater = threading.Thread(
-        target=text_update_loop,
-        daemon=True
-    )
-
+    updater = threading.Thread(target=text_update_loop, daemon=True)
     updater.start()
 
-
-    # ========================================================
-    # YAYIN DONGUSU
-    # ========================================================
-
     while True:
-
         code = start_stream()
-
-
         if code == 0:
-
-            log(
-                "Yayin normal olarak durduruldu."
-            )
-
+            log("Yayin normal olarak durduruldu.")
             break
-
-
-        log(
-            "FFmpeg kapandi. Kod: "
-            + str(code)
-        )
-
-        log(
-            "5 saniye sonra yeniden baglanacak."
-        )
-
-
-        for i in range(
-            5,
-            0,
-            -1
-        ):
-
-            print(
-                "\rYeniden baglaniyor: "
-                + str(i)
-                + " saniye...",
-                end="",
-                flush=True
-            )
-
-            time.sleep(1)
-
-
-        print("")
-
+        log(f"FFmpeg kapandi. Kod: {code}. 5 saniye sonra yeniden baglanacak.")
+        time.sleep(5)
         update_text_files()
 
-
-# ============================================================
-# CALISTIR
-# ============================================================
-
 if __name__ == "__main__":
-
     main()
