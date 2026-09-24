@@ -13,7 +13,7 @@ import threading
 # ============================================================
 # ZEM TV COCUK
 # M3U8 -> RTMP
-# LOGO (SAG UST) + HABERLER + CANLI SAAT + PERIYODIK KAYAN YAZI
+# LOGO (SAG UST) + DINAMIK ZEM TV/HABERLER + SAAT + PERIYODIK BANT
 # ============================================================
 
 
@@ -174,6 +174,11 @@ def create_filter():
     logo = ff_path(LOGO_FILE)
     ticker = ff_path(TICKER_FILE)
 
+    # 300 saniye = 5 dakika. Her 300 saniyede bir bant 20 saniye boyunca çalışıp kaybolacak.
+    # Modulo süresi 300 saniye, aktif kalma süresi 0 ile 20 saniye arası.
+    cycle_expr = "mod(t\\,300)"
+    active_expr = f"between({cycle_expr},0,20)"
+
     filter_text = (
         # Ana videoyu standart 1280x720 boyutuna zorla ve formatı sabitle
         "[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2[base];"
@@ -184,28 +189,14 @@ def create_filter():
         # LOGO SAĞ ÜST KÖŞE (20 piksel içeride)
         "[base][logo]overlay=W-w-20:20[v1];"
 
-        # ALT BANT ANA TEMEL ZEMİN (En altta 640-720 arası)
-        "[v1]drawbox=x=0:y=640:w=1280:h=80:color=0x111827@0.94:t=fill[v2];"
+        # SOL KISIM ANA ZEMİN (Sabit: w=150, h=80)
+        "[v1]drawbox=x=0:y=640:w=150:h=80:color=0x1f2937@1.0:t=fill[v2];"
 
-        # HABERLER KUTUSU (Sabit - Sol kısım, w=150)
-        "[v2]drawbox=x=0:y=640:w=150:h=80:color=0x1f2937@1.0:t=fill[v3];"
-
-        # SAAT KUTUSU (Sabit - Haberler'den hemen sonra, w=130)
-        "[v3]drawbox=x=150:y=640:w=130:h=80:color=0x374151@1.0:t=fill[v4];"
-
-        # "HABERLER" METNİ (Kırmızı renkli, sabit)
-        "[v4]drawtext="
-        f"fontfile='{font}':"
-        "text='HABERLER':"
-        "fontcolor=red:"
-        "fontsize=22:"
-        "x=28:"
-        "y=668:"
-        "borderw=2:"
-        "bordercolor=black[v5];"
+        # SAAT KUTUSU (Sabit: w=130, h=80)
+        "[v2]drawbox=x=150:y=640:w=130:h=80:color=0x374151@1.0:t=fill[v3];"
 
         # CANLI SAAT (Sabit)
-        "[v5]drawtext="
+        "[v3]drawtext="
         f"fontfile='{font}':"
         "text='%{localtime\\:%H\\\\\\:%M}':"
         "fontcolor=white:"
@@ -213,16 +204,42 @@ def create_filter():
         "x=182:"
         "y=666:"
         "borderw=2:"
-        "bordercolor=black[v6];"
+        "bordercolor=black[v4];"
 
-        # KAYAN YAZI BANTI (Her 30 saniyede bir, sadece ilk 10 saniye görünür, sonra gizlenir)
-        "[v6]drawbox="
+        # SOL KISIM METNİ: Bant yokken "ZEM TV", bant aktifken kırmızı "HABERLER"
+        "[v4]drawtext="
+        f"fontfile='{font}':"
+        f"text='ZEM TV':"
+        "fontcolor=white:"
+        "fontsize=22:"
+        "x=35:"
+        "y=668:"
+        "borderw=2:"
+        "bordercolor=black:"
+        f"enable='lte({cycle_expr},0) + gt({cycle_expr},20)'[v5_zem];"
+
+        "[v4]drawtext="
+        f"fontfile='{font}':"
+        f"text='HABERLER':"
+        "fontcolor=red:"
+        "fontsize=22:"
+        "x=28:"
+        "y=668:"
+        "borderw=2:"
+        "bordercolor=black:"
+        f"enable='{active_expr}'[v5_haber];"
+
+        # İki metni birleştir
+        "[v5_zem][v5_haber]overlay=0:0[v5];"
+
+        # KAYAN YAZI BANTI (Sadece 5 dakikada bir, 20 saniye boyunca görünür ve tamamen kaybolur)
+        "[v5]drawbox="
         "x=280:y=640:w=1000:h=80:"
         "color=0x111827@0.94:t=fill:"
-        "enable='between(mod(t\\,30),0,10)'[v7];"
+        f"enable='{active_expr}'[v6];"
 
-        # SAĞDAN SOLA KAYAN YAZI (Saatin üstünden kesinlikle geçmez, x=280'de biter, 30 saniyede bir çalışır)
-        "[v7]drawtext="
+        # SAĞDAN SOLA KAYAN YAZI (Saatin üstüne asla taşmaz, bantla birlikte 5 dakikada bir gelip kaybolur)
+        "[v6]drawtext="
         f"fontfile='{font}':"
         f"textfile='{ticker}':"
         "reload=1:"
@@ -231,8 +248,8 @@ def create_filter():
         "borderw=2:"
         "bordercolor=black:"
         "y=667:"
-        "x='1280 - (mod(t\\,30)*100)':"
-        "enable='between(mod(t\\,30),0,10)'[vout]"
+        f"x='1280 - (mod({cycle_expr}*80\\, 1200))':"
+        f"enable='{active_expr}'[vout]"
     )
 
     return filter_text
