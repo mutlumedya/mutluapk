@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime
 
 # ============================================================
-# ZEM TV HABER - TEK YAYIN
+# ZEM TV COCUK
 # WINDOWS SERVER 2022
 # ============================================================
 
@@ -17,24 +17,21 @@ SOURCE = "https://playlist.fasttvcdn.com/pl/rfrk9821hdy9dayo8wfyha/cizgi-film-tv
 
 RTMP = "rtmp://ssh101.bozztv.com:1935/ssh101/zemtvcocuk"
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOGO = os.path.join(BASE_DIR, "logo.png")
-
 RESTART_DELAY = 5
 
 VIDEO_BITRATE = "2000k"
 AUDIO_BITRATE = "96k"
 
 # ============================================================
-# EKRAN
+# BASLIK
 # ============================================================
 
-os.system("title ZEM TV HABER - CANLI YAYIN")
+os.system("title ZEM TV COCUK - CANLI YAYIN")
 
 print("")
 print("==============================================")
-print("          ZEM TV HABER")
-print("          CANLI YAYIN SISTEMI")
+print("             ZEM TV COCUK")
+print("             CANLI YAYIN")
 print("==============================================")
 print("")
 
@@ -43,14 +40,18 @@ print("")
 # ============================================================
 
 if not os.path.isfile(FFMPEG):
+
     print("[HATA] FFmpeg bulunamadi:")
     print(FFMPEG)
+
     input("Enter'a basin...")
     sys.exit(1)
 
-print("[OK] FFmpeg:", FFMPEG)
+print("[OK] FFmpeg bulundu:")
+print(FFMPEG)
 
 try:
+
     test = subprocess.run(
         [FFMPEG, "-version"],
         stdout=subprocess.PIPE,
@@ -60,35 +61,30 @@ try:
     )
 
     if test.returncode != 0:
+
         print("[HATA] FFmpeg calismiyor.")
         print(test.stderr)
+
         input("Enter'a basin...")
         sys.exit(1)
 
     print("[OK] FFmpeg calisiyor.")
 
 except Exception as e:
-    print("[HATA] FFmpeg kontrol hatasi:", e)
+
+    print("[HATA] FFmpeg kontrol hatasi:")
+    print(e)
+
     input("Enter'a basin...")
     sys.exit(1)
 
-# ============================================================
-# LOGO
-# ============================================================
-
-LOGO_VAR = os.path.isfile(LOGO)
-
-if LOGO_VAR:
-    print("[OK] Logo bulundu:", LOGO)
-else:
-    print("[UYARI] logo.png bulunamadi.")
-    print("[BILGI] Logo olmadan devam edilecek.")
 
 # ============================================================
-# WINDOWS SAATI
+# SAAT
 # ============================================================
 
-def windows_time():
+def saat():
+
     return datetime.now().strftime("%d.%m.%Y %H:%M:%S")
 
 
@@ -96,7 +92,7 @@ def windows_time():
 # YAYIN BASLAT
 # ============================================================
 
-def start_stream():
+def yayin_baslat():
 
     print("")
     print("==============================================")
@@ -104,232 +100,118 @@ def start_stream():
     print("==============================================")
     print("")
 
-    print("[SAAT]", windows_time())
+    print("[SAAT]", saat())
     print("[M3U8]", SOURCE)
     print("[RTMP]", RTMP)
     print("")
 
-    # --------------------------------------------------------
-    # TEMEL VIDEO FILTRESI
-    # --------------------------------------------------------
+    # ========================================================
+    # SADE VIDEO FILTRE
+    #
+    # FONT DOSYASI YOK
+    # FILTER_COMPLEX YOK
+    # LOGO YOK
+    # ========================================================
 
-    video_chain = (
+    VIDEO_FILTER = (
         "scale=1280:720,"
-        "drawbox=x=0:y=0:w=1280:h=55:"
-        "color=black@0.65:t=fill,"
-        "drawtext="
-        "fontfile='C:/Windows/Fonts/arial.ttf':"
-        "text='ZEM TV HABER':"
-        "fontcolor=white:"
-        "fontsize=25:"
-        "x=25:"
-        "y=14,"
-        "drawtext="
-        "fontfile='C:/Windows/Fonts/arial.ttf':"
-        "text='CANLI':"
-        "fontcolor=red:"
-        "fontsize=23:"
-        "x=220:"
-        "y=15,"
-        "drawbox=x=0:y=650:w=1280:h=70:"
-        "color=black@0.85:t=fill,"
-        "drawtext="
-        "fontfile='C:/Windows/Fonts/arial.ttf':"
-        "text='ZEM TV HABER':"
-        "fontcolor=red:"
-        "fontsize=23:"
-        "x=20:"
-        "y=663,"
-        "drawtext="
-        "fontfile='C:/Windows/Fonts/arial.ttf':"
-        "text='SON DAKIKA - CANLI YAYIN - GUNCEL HABERLER':"
-        "fontcolor=white:"
-        "fontsize=21:"
-        "x=230:"
-        "y=664"
+        "drawbox=x=0:y=0:w=1280:h=55:color=black@0.70:t=fill,"
+        "drawtext=text='ZEM TV COCUK':fontcolor=white:fontsize=25:x=25:y=14,"
+        "drawtext=text='CANLI':fontcolor=red:fontsize=23:x=235:y=15,"
+        "drawbox=x=0:y=650:w=1280:h=70:color=black@0.85:t=fill,"
+        "drawtext=text='ZEM TV COCUK':fontcolor=red:fontsize=23:x=20:y=663,"
+        "drawtext=text='CIZGI FILM - CANLI YAYIN':fontcolor=white:fontsize=21:x=230:y=664"
     )
 
-    # --------------------------------------------------------
-    # LOGO VARSA
-    # --------------------------------------------------------
+    # ========================================================
+    # FFMPEG
+    # ========================================================
 
-    if LOGO_VAR:
+    command = [
 
-        filter_complex = (
-            "[1:v]scale=150:-1[logo];"
-            "[0:v][logo]overlay=W-w-25:20[base];"
-            "[base]"
-            + video_chain +
-            "[vout]"
-        )
+        FFMPEG,
 
-        command = [
-            FFMPEG,
+        "-hide_banner",
 
-            "-hide_banner",
+        "-loglevel",
+        "info",
 
-            "-loglevel",
-            "info",
+        # HLS tekrar baglanma
+        "-reconnect",
+        "1",
 
-            "-reconnect",
-            "1",
+        "-reconnect_streamed",
+        "1",
 
-            "-reconnect_streamed",
-            "1",
+        "-reconnect_delay_max",
+        "10",
 
-            "-reconnect_delay_max",
-            "5",
+        # User Agent
+        "-user_agent",
+        "Mozilla/5.0",
 
-            "-user_agent",
-            "Mozilla/5.0",
+        # Kaynak
+        "-i",
+        SOURCE,
 
-            "-i",
-            SOURCE,
+        # Video filtre
+        "-vf",
+        VIDEO_FILTER,
 
-            "-loop",
-            "1",
+        # Video
+        "-map",
+        "0:v:0",
 
-            "-i",
-            LOGO,
+        # Ses varsa al
+        "-map",
+        "0:a?",
 
-            "-filter_complex",
-            filter_complex,
+        "-c:v",
+        "libx264",
 
-            "-map",
-            "[vout]",
+        "-preset",
+        "veryfast",
 
-            "-map",
-            "0:a?",
+        "-tune",
+        "zerolatency",
 
-            "-c:v",
-            "libx264",
+        "-pix_fmt",
+        "yuv420p",
 
-            "-preset",
-            "veryfast",
+        "-b:v",
+        VIDEO_BITRATE,
 
-            "-tune",
-            "zerolatency",
+        "-maxrate",
+        VIDEO_BITRATE,
 
-            "-pix_fmt",
-            "yuv420p",
+        "-bufsize",
+        "4000k",
 
-            "-b:v",
-            VIDEO_BITRATE,
+        "-r",
+        "25",
 
-            "-maxrate",
-            VIDEO_BITRATE,
+        "-g",
+        "50",
 
-            "-bufsize",
-            "4000k",
+        # Ses
+        "-c:a",
+        "aac",
 
-            "-r",
-            "25",
+        "-b:a",
+        AUDIO_BITRATE,
 
-            "-g",
-            "50",
+        "-ar",
+        "44100",
 
-            "-c:a",
-            "aac",
+        "-ac",
+        "2",
 
-            "-b:a",
-            AUDIO_BITRATE,
+        # RTMP
+        "-f",
+        "flv",
 
-            "-ar",
-            "44100",
-
-            "-ac",
-            "2",
-
-            "-flvflags",
-            "no_duration_filesize",
-
-            "-f",
-            "flv",
-
-            RTMP
-        ]
-
-    else:
-
-        command = [
-            FFMPEG,
-
-            "-hide_banner",
-
-            "-loglevel",
-            "info",
-
-            "-reconnect",
-            "1",
-
-            "-reconnect_streamed",
-            "1",
-
-            "-reconnect_delay_max",
-            "5",
-
-            "-user_agent",
-            "Mozilla/5.0",
-
-            "-i",
-            SOURCE,
-
-            "-vf",
-            video_chain,
-
-            "-map",
-            "0:v:0",
-
-            "-map",
-            "0:a?",
-
-            "-c:v",
-            "libx264",
-
-            "-preset",
-            "veryfast",
-
-            "-tune",
-            "zerolatency",
-
-            "-pix_fmt",
-            "yuv420p",
-
-            "-b:v",
-            VIDEO_BITRATE,
-
-            "-maxrate",
-            VIDEO_BITRATE,
-
-            "-bufsize",
-            "4000k",
-
-            "-r",
-            "25",
-
-            "-g",
-            "50",
-
-            "-c:a",
-            "aac",
-
-            "-b:a",
-            AUDIO_BITRATE,
-
-            "-ar",
-            "44100",
-
-            "-ac",
-            "2",
-
-            "-flvflags",
-            "no_duration_filesize",
-
-            "-f",
-            "flv",
-
-            RTMP
-        ]
+        RTMP
+    ]
 
     print("[FFmpeg] Baslatiliyor...")
     print("")
@@ -357,6 +239,10 @@ def start_stream():
 
     aktif = False
 
+    # ========================================================
+    # FFmpeg LOG
+    # ========================================================
+
     try:
 
         for line in process.stdout:
@@ -370,6 +256,7 @@ def start_stream():
 
             low = line.lower()
 
+            # Video frame tespit
             if "frame=" in low and not aktif:
 
                 aktif = True
@@ -378,28 +265,40 @@ def start_stream():
                 print("==============================================")
                 print("          [✓] VIDEO KARELERI AKIYOR")
                 print("          [✓] YAYIN AKTIF")
+                print("          [✓] ZEM TV COCUK")
                 print("==============================================")
                 print("")
 
+            # RTMP baglantisi
+            if "flv" in low and "opening" in low:
+
+                print("[✓] RTMP CIKISI ACILIYOR...")
+
+            # Hata
             if "error" in low:
 
                 print("[FFmpeg HATA]", line)
 
     except Exception as e:
 
-        print("[UYARI] FFmpeg log okuma hatasi:")
+        print("[UYARI] FFmpeg log hatasi:")
         print(e)
 
     try:
+
         process.wait()
+
     except:
+
         pass
 
     print("")
+    print("==============================================")
     print("[UYARI] FFmpeg kapandi.")
-    print("[SISTEM] {} saniye sonra tekrar denenecek.".format(
+    print("[SISTEM] {} saniye sonra yeniden baslatilacak.".format(
         RESTART_DELAY
     ))
+    print("==============================================")
 
 
 # ============================================================
@@ -410,17 +309,17 @@ while True:
 
     now = datetime.now()
 
-    # 03:00 - 04:00 arasi kapali
+    # 03:00 - 04:00 yayin kapali
     if now.hour == 3:
 
         print("")
         print("[UYKU] 03:00 - 04:00 arasi yayin kapali.")
-        print("[SAAT]", windows_time())
+        print("[SAAT]", saat())
 
         time.sleep(60)
 
         continue
 
-    start_stream()
+    yayin_baslat()
 
     time.sleep(RESTART_DELAY)
