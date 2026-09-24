@@ -188,7 +188,7 @@ def create_filter():
         # LOGO SAĞ ÜST KÖŞE (20 piksel içeride)
         "[base][logo]overlay=W-w-20:20[v1];"
 
-        # 1. KAYAN YAZI BANTI VE METNİ (Arka planda çalışır, 5 dakikada bir 25 saniye görünür)
+        # 1. ALT BANT ZEMİNİ VE KAYAN YAZI (Sadece her 5 dakikada bir ilk 25 sn görünür)
         "[v1]drawbox=x=280:y=640:w=1000:h=80:color=0x111827@0.94:t=fill:"
         f"enable='{active_expr}'[v_box];"
 
@@ -204,15 +204,14 @@ def create_filter():
         "y=667:"
         f"enable='{active_expr}'[v_ticker];"
 
-        # 2. ÜST KATMAN KUTULARI VE SABİT YAZILAR (Kayan yazının saatin üstüne taşmasını engeller)
-        # SOL KISIM (ZEM TV / HABERLER alanı, w=150)
-        "[v_ticker]drawbox=x=0:y=640:w=150:h=80:color=0x1f2937@1.0:t=fill[v_box_left];"
+        # 2. SOL KISIM ANA ZEMİN (Sabit w=150)
+        "[v_ticker]drawbox=x=0:y=640:w=150:h=80:color=0x1f2937@1.0:t=fill[v2];"
 
-        # SAAT KUTUSU (Sabit saat alanı, w=130, x=150)
-        "[v_box_left]drawbox=x=150:y=640:w=130:h=80:color=0x374151@1.0:t=fill[v_box_clock];"
+        # 3. SAAT KUTUSU (Sabit w=130, x=150) -> Kayan yazının saatin üstüne geçmesini engeller
+        "[v2]drawbox=x=150:y=640:w=130:h=80:color=0x374151@1.0:t=fill[v3];"
 
-        # CANLI SAAT (Sabit)
-        "[v_box_clock]drawtext="
+        # 4. CANLI SAAT (Sabit)
+        "[v3]drawtext="
         f"fontfile='{font}':"
         "text='%{localtime\\:%H\\\\\\:%M}':"
         "fontcolor=white:"
@@ -220,10 +219,11 @@ def create_filter():
         "x=182:"
         "y=666:"
         "borderw=2:"
-        "bordercolor=black[v_clock_text];"
+        "bordercolor=black[v4];"
 
-        # SOL KISIM METNİ: Bant yokken "ZEM TV", bant aktifken kırmızı "HABERLER"
-        "[v_clock_text]drawtext="
+        # 5. SOL KISIM METNİ: Bant yokken "ZEM TV", bant aktifken kırmızı "HABERLER"
+        # İki metni çakıştırmadan 'enable' mantığıyla tek akışta yazdırıyoruz
+        "[v4]drawtext="
         f"fontfile='{font}':"
         "text='ZEM TV':"
         "fontcolor=white:"
@@ -232,9 +232,9 @@ def create_filter():
         "y=668:"
         "borderw=2:"
         "bordercolor=black:"
-        f"enable='lte({cycle_expr},0) + gt({cycle_expr},25)'[v_zem];"
+        f"enable='lte({cycle_expr},0) + gt({cycle_expr},25)'[v_text1];"
 
-        "[v_clock_text]drawtext="
+        "[v_text1]drawtext="
         f"fontfile='{font}':"
         "text='HABERLER':"
         "fontcolor=red:"
@@ -243,9 +243,7 @@ def create_filter():
         "y=668:"
         "borderw=2:"
         "bordercolor=black:"
-        f"enable='{active_expr}'[v_haber];"
-
-        "[v_zem][v_haber]overlay=0:0[vout]"
+        f"enable='{active_expr}'[vout]"
     )
 
     return filter_text
