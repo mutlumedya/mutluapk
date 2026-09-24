@@ -174,7 +174,7 @@ def create_filter():
     logo = ff_path(LOGO_FILE)
     ticker = ff_path(TICKER_FILE)
 
-    # 300 saniye = 5 dakika. Her 5 dakikada bir ilk 25 saniye bant ve haberler aktif olacak.
+    # 300 saniye = 5 dakika. Her 5 dakikada bir ilk 25 saniye bant aktif olacak.
     cycle_expr = "mod(t\\,300)"
     active_expr = f"between({cycle_expr},0,25)"
 
@@ -188,14 +188,32 @@ def create_filter():
         # LOGO SAĞ ÜST KÖŞE (20 piksel içeride)
         "[base][logo]overlay=W-w-20:20[v1];"
 
-        # SOL KISIM ANA ZEMİN (Sabit: w=150, h=80)
-        "[v1]drawbox=x=0:y=640:w=150:h=80:color=0x1f2937@1.0:t=fill[v2];"
+        # 1. KAYAN YAZI BANTI VE METNİ (Arka planda çalışır, sağdan sola akar)
+        # Sadece 5 dakikada bir, 25 saniye boyunca görünür
+        "[v1]drawbox=x=280:y=640:w=1000:h=80:color=0x111827@0.94:t=fill:"
+        f"enable='{active_expr}'[v_box];"
 
-        # SAAT KUTUSU (Sabit: w=130, h=80)
-        "[v2]drawbox=x=150:y=640:w=130:h=80:color=0x374151@1.0:t=fill[v3];"
+        "[v_box]drawtext="
+        f"fontfile='{font}':"
+        f"textfile='{ticker}':"
+        "reload=1:"
+        "fontcolor=white:"
+        "fontsize=24:"
+        "borderw=2:"
+        "bordercolor=black:"
+        "x='1280 - mod(t*100\\, 1250)':"
+        "y=667:"
+        f"enable='{active_expr}'[v_ticker];"
+
+        # 2. ÜST KATMAN KUTULARI VE SABİT YAZILAR (En üstte kalır, kayan yazıyı maskeler/örter)
+        # SOL KISIM ANA ZEMİN (Habercilik / ZEM TV alanı, w=150)
+        "[v_ticker]drawbox=x=0:y=640:w=150:h=80:color=0x1f2937@1.0:t=fill[v_box_left];"
+
+        # SAAT KUTUSU (Sabit saat alanı, w=130, x=150) -> Bu kutu kayan yazının saatin üstüne geçmesini kesinlikle engeller!
+        "[v_box_left]drawbox=x=150:y=640:w=130:h=80:color=0x374151@1.0:t=fill[v_box_clock];"
 
         # CANLI SAAT (Sabit - Asla kaybolmaz)
-        "[v3]drawtext="
+        "[v_box_clock]drawtext="
         f"fontfile='{font}':"
         "text='%{localtime\\:%H\\\\\\:%M}':"
         "fontcolor=white:"
@@ -203,10 +221,10 @@ def create_filter():
         "x=182:"
         "y=666:"
         "borderw=2:"
-        "bordercolor=black[v4];"
+        "bordercolor=black[v_clock_text];"
 
         # SOL KISIM METNİ: Bant yokken "ZEM TV", bant aktifken kırmızı "HABERLER"
-        "[v4]drawtext="
+        "[v_clock_text]drawtext="
         f"fontfile='{font}':"
         "text='ZEM TV':"
         "fontcolor=white:"
@@ -215,9 +233,9 @@ def create_filter():
         "y=668:"
         "borderw=2:"
         "bordercolor=black:"
-        f"enable='lte({cycle_expr},0) + gt({cycle_expr},25)'[v5_zem];"
+        f"enable='lte({cycle_expr},0) + gt({cycle_expr},25)'[v_zem];"
 
-        "[v4]drawtext="
+        "[v_clock_text]drawtext="
         f"fontfile='{font}':"
         "text='HABERLER':"
         "fontcolor=red:"
@@ -226,28 +244,9 @@ def create_filter():
         "y=668:"
         "borderw=2:"
         "bordercolor=black:"
-        f"enable='{active_expr}'[v5_haber];"
+        f"enable='{active_expr}'[v_haber];"
 
-        "[v5_zem][v5_haber]overlay=0:0[v5];"
-
-        # KAYAN YAZI BANTI (Sadece 5 dakikada bir, 25 saniye boyunca görünür)
-        "[v5]drawbox="
-        "x=280:y=640:w=1000:h=80:"
-        "color=0x111827@0.94:t=fill:"
-        f"enable='{active_expr}'[v6];"
-
-        # SAĞDAN SOLA KAYAN YAZI (Saatin üstüne asla taşmaz, x 280'den küçük olamaz)
-        "[v6]drawtext="
-        f"fontfile='{font}':"
-        f"textfile='{ticker}':"
-        "reload=1:"
-        "fontcolor=white:"
-        "fontsize=24:"
-        "borderw=2:"
-        "bordercolor=black:"
-        "x='max(290, 1280 - mod(t*100\\, 1250))':"
-        "y=667:"
-        f"enable='{active_expr}'[vout]"
+        "[v_zem][v_haber]overlay=0:0[vout]"
     )
 
     return filter_text
