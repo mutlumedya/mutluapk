@@ -13,7 +13,7 @@ import threading
 # ============================================================
 # ZEM TV COCUK
 # M3U8 -> RTMP
-# LOGO (SAG UST) + DINAMIK ZEM TV / HABERLER + SAAT + PERIYODIK BANT
+# LOGO (SAG UST) + DINAMIK ZEM TV/HABERLER + CANLI SAAT + PERIYODIK BANT
 # ============================================================
 
 
@@ -188,8 +188,7 @@ def create_filter():
         # LOGO SAĞ ÜST KÖŞE (20 piksel içeride)
         "[base][logo]overlay=W-w-20:20[v1];"
 
-        # 1. KAYAN YAZI BANTI VE METNİ (Arka planda çalışır, sağdan sola akar)
-        # Sadece 5 dakikada bir, 25 saniye boyunca görünür
+        # 1. KAYAN YAZI BANTI VE METNİ (Arka planda çalışır, 5 dakikada bir 25 saniye görünür)
         "[v1]drawbox=x=280:y=640:w=1000:h=80:color=0x111827@0.94:t=fill:"
         f"enable='{active_expr}'[v_box];"
 
@@ -205,14 +204,14 @@ def create_filter():
         "y=667:"
         f"enable='{active_expr}'[v_ticker];"
 
-        # 2. ÜST KATMAN KUTULARI VE SABİT YAZILAR (En üstte kalır, kayan yazıyı maskeler/örter)
-        # SOL KISIM ANA ZEMİN (Habercilik / ZEM TV alanı, w=150)
+        # 2. ÜST KATMAN KUTULARI VE SABİT YAZILAR (Kayan yazının saatin üstüne taşmasını engeller)
+        # SOL KISIM (ZEM TV / HABERLER alanı, w=150)
         "[v_ticker]drawbox=x=0:y=640:w=150:h=80:color=0x1f2937@1.0:t=fill[v_box_left];"
 
-        # SAAT KUTUSU (Sabit saat alanı, w=130, x=150) -> Bu kutu kayan yazının saatin üstüne geçmesini kesinlikle engeller!
+        # SAAT KUTUSU (Sabit saat alanı, w=130, x=150)
         "[v_box_left]drawbox=x=150:y=640:w=130:h=80:color=0x374151@1.0:t=fill[v_box_clock];"
 
-        # CANLI SAAT (Sabit - Asla kaybolmaz)
+        # CANLI SAAT (Sabit)
         "[v_box_clock]drawtext="
         f"fontfile='{font}':"
         "text='%{localtime\\:%H\\\\\\:%M}':"
@@ -263,7 +262,7 @@ def build_command():
         FFMPEG,
         "-hide_banner",
         "-loglevel", "info",
-        # M3U8 kopmalarını önleyen kararlılık bayrakları:
+        # Yayın kopmalarını ve 1 dakika sonra kapanmayı önleyen kararlılık bayrakları:
         "-fflags", "+genpts+discardcorrupt",
         "-reconnect", "1",
         "-reconnect_streamed", "1",
