@@ -1,263 +1,521 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import subprocess
+import os
 import sys
 import time
-import os
-import requests
-import signal
-import logging
+import subprocess
+import urllib.request
+import urllib.error
 from datetime import datetime
 from pathlib import Path
 
-# ===================== LOG AYARLARI =====================
-LOG_DIR = os.path.join(os.getcwd(), 'logs')
-os.makedirs(LOG_DIR, exist_ok=True)
+# ============================================================
+# ZEM TV COCUK - M3U8 -> RTMP
+# LOGO + SAAT + BILGI BAR + KAYAN YAZI
+# WINDOWS VDS
+# ============================================================
 
-log_file = os.path.join(LOG_DIR, f'yayin_{datetime.now().strftime("%Y%m%d")}.log')
+# ----------------------------
+# AYARLAR
+# ----------------------------
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file, encoding='utf-8'),
-        logging.StreamHandler()
-    ]
+M3U8_URL = "https://playlist.fasttvcdn.com/pl/rfrk9821hdy9dayo8wfyha/cizgi-film-tv/playlist/0.m3u8"
+
+RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101/zemtvcocuk"
+
+LOGO_URL = "https://raw.githubusercontent.com/mutlumedya/cine/refs/heads/main/telegram.png"
+
+CHANNEL_NAME = "ZEM TV COCUK"
+
+SCROLL_TEXT = (
+    "ZEM TV COCUK  |  Keyifli seyirler  |  "
+    "ZEM MEDYA  |  Turkiye'nin dijital yayini"
 )
 
-# ===================== RENKLİ ÇIKTI =====================
-class Colors:
-    RED = '\033[0;31m'
-    GREEN = '\033[0;32m'
-    YELLOW = '\033[1;33m'
-    BLUE = '\033[0;34m'
-    NC = '\033[0m'
+# FFmpeg yolu
+FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"
 
-def print_colored(color, text):
-    print(f"{color}{text}{Colors.NC}")
+# Calisma klasoru
+BASE_DIR = Path(__file__).resolve().parent
 
-# ===================== CATCAST AYARLARI =====================
-RTMP_URL = "rtmp://s.catcast.tv/live"
-STREAM_KEY = "mutluhub1?key=27610_50990_253571354411efe7"
-rtmp_server = f"{RTMP_URL}/{STREAM_KEY}"
+LOGO_FILE = BASE_DIR / "zemtv_logo.png"
+CLOCK_FILE = BASE_DIR / "zemtv_clock.txt"
+INFO_FILE = BASE_DIR / "zemtv_info.txt"
+TICKER_FILE = BASE_DIR / "zemtv_ticker.txt"
 
-VIDEO_URL = "https://cdn.codenet.lol/streamgo/stremgo123/4865.m3u8"
-LOGO_URL = "https://raw.githubusercontent.com/mutlumedya/yayin/refs/heads/main/logo1.png"
+# Windows Arial
+FONT_FILE = r"C:\Windows\Fonts\arial.ttf"
 
-# ===================== KONFIGÜRASYON =====================
-CONFIG = {
-    'restart_delay': 3,
-    'max_restarts': 999999,
-    'log_interval': 30
-}
+# Video ayarlari
+VIDEO_WIDTH = 1280
+VIDEO_HEIGHT = 720
+VIDEO_FPS = 25
 
-# ===================== PAKET KURULUMU =====================
-def is_termux():
-    return 'TERMUX_VERSION' in os.environ or '/data/data/com.termux' in os.environ
+VIDEO_BITRATE = "3000k"
+MAXRATE = "3500k"
+BUFSIZE = "6000k"
 
-def check_and_install_packages():
-    """Gerekli paketleri kontrol et ve kur"""
-    logging.info("📦 Paketler kontrol ediliyor...")
-    
-    try:
-        import requests
-        logging.info("✅ requests zaten yüklü")
-    except ImportError:
-        logging.info("📥 requests yükleniyor...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "requests"], check=True)
-    
-    # FFmpeg kontrolü
-    try:
-        result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
-        if result.returncode == 0:
-            version = result.stdout.split()[2] if result.stdout else "bilinmiyor"
-            logging.info(f"✅ FFmpeg mevcut: {version}")
-        else:
-            logging.warning("⚠️ FFmpeg bulunamadı!")
-            if is_termux():
-                subprocess.run(['pkg', 'install', '-y', 'ffmpeg'], check=True)
-    except:
-        logging.warning("⚠️ FFmpeg bulunamadı!")
-        if is_termux():
-            subprocess.run(['pkg', 'install', '-y', 'ffmpeg'], check=True)
+AUDIO_BITRATE = "128k"
 
-# ===================== LOGO İNDİRME =====================
+# Yeniden baglanma
+RESTART_DELAY = 5
+
+# Logo boyutu
+LOGO_WIDTH = 150
+
+# ----------------------------
+# RENK / GORUNUM
+# ----------------------------
+
+INFO_HEIGHT = 58
+TICKER_HEIGHT = 48
+
+# ============================================================
+# YARDIMCI FONKSIYONLAR
+# ============================================================
+
+def log(text):
+    now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    print(f"[{now}] {text}", flush=True)
+
+
+def check_ffmpeg():
+    if not os.path.isfile(FFMPEG):
+        print("")
+        print("FFmpeg bulunamadi!")
+        print("")
+        print("Beklenen:")
+        print(FFMPEG)
+        print("")
+        print("FFmpeg'i C:\\ffmpeg\\bin\\ klasorune koy.")
+        print("")
+        sys.exit(1)
+
+
 def download_logo():
-    """Logo dosyasını indir"""
-    try:
-        if LOGO_URL.startswith('http'):
-            response = requests.get(LOGO_URL, timeout=30)
-            response.raise_for_status()
-            with open('logo1.png', 'wb') as f:
-                f.write(response.content)
-            logging.info("✅ Logo indirildi")
-            return True
-    except Exception as e:
-        logging.warning(f"⚠️ Logo indirme hatası: {e}")
-    return False
+    if LOGO_FILE.exists() and LOGO_FILE.stat().st_size > 1000:
+        return True
 
-# ===================== YAYIN BAŞLAT =====================
-def start_stream():
-    """Yayını başlat"""
-    logging.info("=" * 50)
-    logging.info("🎬 Video: " + VIDEO_URL)
-    logging.info("🔑 Stream Key: " + STREAM_KEY)
-    logging.info("=" * 50)
-    
-    # Logoyu indir
-    logo_exists = download_logo()
-    
-    # FFmpeg komutu - DOĞRU SİNTAX
-    # ÖNCE linki test et
-    logging.info("🔍 Link test ediliyor...")
-    test_cmd = ['ffmpeg', '-i', VIDEO_URL, '-t', '5', '-f', 'null', '-']
+    log("Logo indiriliyor...")
+
     try:
-        test_result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=10)
-        if test_result.returncode != 0:
-            logging.error(f"❌ Link çalışmıyor! Hata: {test_result.stderr[:200]}")
-            return False
-        else:
-            logging.info("✅ Link çalışıyor!")
+        request = urllib.request.Request(
+            LOGO_URL,
+            headers={
+                "User-Agent": "Mozilla/5.0"
+            }
+        )
+
+        with urllib.request.urlopen(request, timeout=20) as response:
+            data = response.read()
+
+        if len(data) < 1000:
+            raise Exception("Logo dosyasi gecersiz veya cok kucuk.")
+
+        with open(LOGO_FILE, "wb") as f:
+            f.write(data)
+
+        log("Logo hazir.")
+        return True
+
     except Exception as e:
-        logging.error(f"❌ Link test hatası: {e}")
+        log("Logo indirilemedi: " + str(e))
         return False
-    
-    # FFmpeg komutunu oluştur
-    if logo_exists and os.path.exists('logo1.png'):
-        command = [
-            'ffmpeg',
-            '-re',
-            '-stream_loop', '-1',
-            '-i', VIDEO_URL,
-            '-i', 'logo1.png',
-            '-filter_complex',
-            '[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=25[v0];'
-            '[1:v]scale=230:90[logo];'
-            '[v0][logo]overlay=W-w-10:10[v1];'
-            '[v1]drawtext=text=t.me/digitaltivi:fontcolor=white:fontsize=24:box=1:boxcolor=black@0.6:boxborderw=5:x=(w-text_w)/2:y=h-text_h-20[v]',
-            '-map', '[v]',
-            '-map', '0:a?',
-            '-c:v', 'libx264',
-            '-preset', 'veryfast',
-            '-pix_fmt', 'yuv420p',
-            '-b:v', '4000k',
-            '-maxrate', '4000k',
-            '-bufsize', '8000k',
-            '-g', '50',
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-ar', '44100',
-            '-f', 'flv',
-            rtmp_server
-        ]
-    else:
-        command = [
-            'ffmpeg',
-            '-re',
-            '-stream_loop', '-1',
-            '-i', VIDEO_URL,
-            '-filter_complex',
-            '[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=25[v0];'
-            '[v0]drawtext=text=t.me/digitaltivi:fontcolor=white:fontsize=24:box=1:boxcolor=black@0.6:boxborderw=5:x=(w-text_w)/2:y=h-text_h-20[v]',
-            '-map', '[v]',
-            '-map', '0:a?',
-            '-c:v', 'libx264',
-            '-preset', 'veryfast',
-            '-pix_fmt', 'yuv420p',
-            '-b:v', '4000k',
-            '-maxrate', '4000k',
-            '-bufsize', '8000k',
-            '-g', '50',
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-ar', '44100',
-            '-f', 'flv',
-            rtmp_server
-        ]
-    
-    logging.info("🎥 Yayın başlatılıyor...")
-    logging.info("🖼️ Logo: Sağ üst (230x90)")
-    logging.info("📝 Alt yazı: t.me/digitaltivi")
-    logging.info("⏸️ Durdurmak için: Ctrl + C\n")
-    
-    restart_count = 0
-    
-    while True:
-        try:
-            # FFmpeg'i başlat
-            process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1
-            )
-            
-            last_log_time = time.time()
-            
-            # Yayını izle
-            while True:
-                # Process durumu kontrol et
-                if process.poll() is not None:
-                    logging.warning(f"⚠️ Yayın durdu (kod: {process.returncode})")
-                    restart_count += 1
-                    logging.info(f"🔄 Yeniden başlatılıyor ({restart_count}. kez)...")
-                    time.sleep(CONFIG['restart_delay'])
-                    break
-                
-                # FFmpeg çıktısını oku
-                if process.stdout:
-                    line = process.stdout.readline()
-                    if line:
-                        line = line.strip()
-                        if "error" in line.lower() or "failed" in line.lower():
-                            logging.error(f"⚠️ {line}")
-                        elif "frame=" in line.lower() and "fps" in line.lower():
-                            current_time = time.time()
-                            if current_time - last_log_time >= CONFIG['log_interval']:
-                                logging.info(f"📊 {line}")
-                                last_log_time = current_time
-                        elif "speed" in line.lower() and "x" in line:
-                            logging.info(f"📊 {line}")
-                
-                time.sleep(0.5)
-                
-        except KeyboardInterrupt:
-            logging.info("\n\n⛔ Yayın durduruluyor...")
-            if 'process' in locals():
-                process.terminate()
-                process.wait()
-            logging.info("✅ Yayın sonlandırıldı.")
-            return False
-        except Exception as e:
-            logging.error(f"❌ Hata: {e}")
-            time.sleep(CONFIG['restart_delay'])
-            continue
 
-# ===================== ANA PROGRAM =====================
-def main():
-    """Ana program"""
-    print_colored(Colors.BLUE, "=" * 50)
-    print_colored(Colors.GREEN, "  Catcast.tv Yayın Sistemi")
-    print_colored(Colors.BLUE, "=" * 50)
-    
-    logging.info("=" * 50)
-    logging.info("  Catcast.tv Yayın Sistemi Başlatıldı")
-    logging.info("=" * 50)
-    
-    check_and_install_packages()
-    
-    # Sonsuz döngü
-    while True:
+
+def write_text_file(path, text):
+    tmp = Path(str(path) + ".tmp")
+
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+
+        os.replace(tmp, path)
+
+    except Exception:
         try:
-            success = start_stream()
-            if not success:
-                logging.error("❌ Yayın başlatılamadı! 5 saniye sonra yeniden deneniyor...")
-                time.sleep(5)
-        except Exception as e:
-            logging.error(f"❌ Kritik hata: {e}")
-            time.sleep(5)
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+
+
+def update_overlay_files():
+    # Saat
+    current_time = datetime.now().strftime("%H:%M:%S")
+    current_date = datetime.now().strftime("%d.%m.%Y")
+
+    write_text_file(
+        CLOCK_FILE,
+        current_time
+    )
+
+    # Bilgi
+    write_text_file(
+        INFO_FILE,
+        f"{CHANNEL_NAME}    |    CANLI YAYIN    |    {current_date}"
+    )
+
+    # Kayan yazi
+    write_text_file(
+        TICKER_FILE,
+        SCROLL_TEXT
+    )
+
+
+def create_files():
+    update_overlay_files()
+
+
+def make_filter():
+    """
+    FFmpeg filtre zinciri.
+
+    Logo:
+    sag ust
+
+    Saat:
+    sol ust
+
+    Bilgi:
+    alt kisim ustunde
+
+    Kayan yazi:
+    en alt kisim
+    """
+
+    # Windows yollarini FFmpeg icin guvenli hale getir
+    logo = str(LOGO_FILE).replace("\\", "/")
+    font = FONT_FILE.replace("\\", "/")
+    clock = str(CLOCK_FILE).replace("\\", "/")
+    info = str(INFO_FILE).replace("\\", "/")
+    ticker = str(TICKER_FILE).replace("\\", "/")
+
+    # Drive colon'u FFmpeg filtrelerinde sorun cikarmasin
+    logo = logo.replace(":", "\\:")
+    font = font.replace(":", "\\:")
+    clock = clock.replace(":", "\\:")
+    info = info.replace(":", "\\:")
+    ticker = ticker.replace(":", "\\:")
+
+    filter_complex = (
+        # Logo
+        f"[1:v]"
+        f"scale={LOGO_WIDTH}:-1,"
+        f"format=rgba"
+        f"[logo];"
+
+        # Ana video + logo
+        f"[0:v][logo]"
+        f"overlay=W-w-18:18:format=auto"
+        f"[v1];"
+
+        # Saat
+        f"[v1]"
+        f"drawtext="
+        f"fontfile='{font}':"
+        f"textfile='{clock}':"
+        f"reload=25:"
+        f"fontsize=30:"
+        f"fontcolor=white:"
+        f"box=1:"
+        f"boxcolor=black@0.55:"
+        f"boxborderw=10:"
+        f"x=18:"
+        f"y=18"
+        f"[v2];"
+
+        # Bilgi cubugu
+        f"[v2]"
+        f"drawbox="
+        f"x=0:"
+        f"y=H-{TICKER_HEIGHT + INFO_HEIGHT}:"
+        f"w=W:"
+        f"h={INFO_HEIGHT}:"
+        f"color=black@0.72:"
+        f"t=fill"
+        f"[v3];"
+
+        # Bilgi yazisi
+        f"[v3]"
+        f"drawtext="
+        f"fontfile='{font}':"
+        f"textfile='{info}':"
+        f"reload=25:"
+        f"fontsize=25:"
+        f"fontcolor=white:"
+        f"x=25:"
+        f"y=H-{TICKER_HEIGHT + INFO_HEIGHT}+16"
+        f"[v4];"
+
+        # Kayan yazi arka plani
+        f"[v4]"
+        f"drawbox="
+        f"x=0:"
+        f"y=H-{TICKER_HEIGHT}:"
+        f"w=W:"
+        f"h={TICKER_HEIGHT}:"
+        f"color=black@0.90:"
+        f"t=fill"
+        f"[v5];"
+
+        # Kayan yazi
+        f"[v5]"
+        f"drawtext="
+        f"fontfile='{font}':"
+        f"textfile='{ticker}':"
+        f"reload=25:"
+        f"fontsize=26:"
+        f"fontcolor=white:"
+        f"x='W-mod(t*150\\,W+tw)':"
+        f"y=H-{TICKER_HEIGHT}+11"
+        f"[vout]"
+    )
+
+    return filter_complex
+
+
+def build_command():
+    filter_complex = make_filter()
+
+    command = [
+        FFMPEG,
+
+        "-hide_banner",
+
+        # ------------------------------------------------
+        # M3U8
+        # ------------------------------------------------
+        "-reconnect", "1",
+        "-reconnect_streamed", "1",
+        "-reconnect_delay_max", "10",
+        "-rw_timeout", "15000000",
+
+        "-user_agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 Chrome/140.0 Safari/537.36",
+
+        "-referer",
+        "https://playlist.fasttvcdn.com/",
+
+        "-i",
+        M3U8_URL,
+
+        # ------------------------------------------------
+        # LOGO
+        # ------------------------------------------------
+        "-loop", "1",
+        "-i",
+        str(LOGO_FILE),
+
+        # ------------------------------------------------
+        # FILTER
+        # ------------------------------------------------
+        "-filter_complex",
+        filter_complex,
+
+        "-map",
+        "[vout]",
+
+        "-map",
+        "0:a?",
+
+        # ------------------------------------------------
+        # VIDEO
+        # ------------------------------------------------
+        "-c:v",
+        "libx264",
+
+        "-preset",
+        "veryfast",
+
+        "-tune",
+        "zerolatency",
+
+        "-profile:v",
+        "main",
+
+        "-level",
+        "4.0",
+
+        "-pix_fmt",
+        "yuv420p",
+
+        "-r",
+        str(VIDEO_FPS),
+
+        "-s",
+        f"{VIDEO_WIDTH}x{VIDEO_HEIGHT}",
+
+        "-b:v",
+        VIDEO_BITRATE,
+
+        "-maxrate",
+        MAXRATE,
+
+        "-bufsize",
+        BUFSIZE,
+
+        "-g",
+        "50",
+
+        "-keyint_min",
+        "50",
+
+        "-sc_threshold",
+        "0",
+
+        # ------------------------------------------------
+        # AUDIO
+        # ------------------------------------------------
+        "-c:a",
+        "aac",
+
+        "-b:a",
+        AUDIO_BITRATE,
+
+        "-ar",
+        "44100",
+
+        "-ac",
+        "2",
+
+        # ------------------------------------------------
+        # RTMP
+        # ------------------------------------------------
+        "-f",
+        "flv",
+
+        "-flvflags",
+        "no_duration_filesize",
+
+        RTMP_URL
+    ]
+
+    return command
+
+
+def run_ffmpeg():
+    command = build_command()
+
+    log("FFmpeg baslatiliyor.")
+    log("Kaynak:")
+    log(M3U8_URL)
+    log("RTMP:")
+    log(RTMP_URL)
+
+    print("")
+    print("--------------------------------------------------")
+    print(" ZEM TV COCUK")
+    print(" LOGO       : AKTIF")
+    print(" SAAT       : AKTIF")
+    print(" BILGI BAR  : AKTIF")
+    print(" KAYAN YAZI : AKTIF")
+    print("--------------------------------------------------")
+    print("")
+
+    process = None
+
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            universal_newlines=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1
+        )
+
+        last_overlay_update = 0
+
+        while True:
+            line = process.stdout.readline()
+
+            if line:
+                print(line.rstrip(), flush=True)
+
+            # Saat dosyasini her saniye yenile
+            now = time.time()
+
+            if now - last_overlay_update >= 1:
+                update_overlay_files()
+                last_overlay_update = now
+
+            if process.poll() is not None:
+                break
+
+        return_code = process.returncode
+
+        log(f"FFmpeg kapandi. Kod: {return_code}")
+
+        return return_code
+
+    except KeyboardInterrupt:
+        log("Yayin kullanici tarafindan durduruldu.")
+
+        if process:
+            try:
+                process.terminate()
+                process.wait(timeout=5)
+            except Exception:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+
+        return 0
+
+    except Exception as e:
+        log("FFmpeg calistirma hatasi: " + str(e))
+        return -1
+
+
+# ============================================================
+# ANA DONGU
+# ============================================================
+
+def main():
+
+    print("")
+    print("==================================================")
+    print(" ZEM TV COCUK YAYIN SISTEMI")
+    print("==================================================")
+    print("")
+
+    check_ffmpeg()
+
+    download_logo()
+
+    create_files()
+
+    log("Sistem hazir.")
+
+    while True:
+
+        # Saat ve overlay dosyalari
+        update_overlay_files()
+
+        result = run_ffmpeg()
+
+        if result == 0:
+            break
+
+        log(f"Yayin {RESTART_DELAY} saniye sonra yeniden baslatilacak.")
+
+        for i in range(RESTART_DELAY, 0, -1):
+            print(
+                f"\rYeniden baslatiliyor: {i} saniye ",
+                end="",
+                flush=True
+            )
+            time.sleep(1)
+
+        print("")
+
+        update_overlay_files()
+
 
 if __name__ == "__main__":
     main()
