@@ -4,12 +4,11 @@ import os
 import sys
 import time
 import subprocess
-import urllib.request
 from datetime import datetime
 
 # ============================================================
 # ZEM TV HABER - TEK YAYIN
-# Windows Server 2022
+# WINDOWS SERVER 2022
 # ============================================================
 
 FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"
@@ -18,27 +17,18 @@ SOURCE = "https://playlist.fasttvcdn.com/pl/rfrk9821hdy9dayo8wfyha/cizgi-film-tv
 
 RTMP = "rtmp://ssh101.bozztv.com:1935/ssh101/zemtvcocuk"
 
-LOGO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.png")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-WIDTH = 1280
-HEIGHT = 720
-
-VIDEO_BITRATE = "2000k"
-AUDIO_BITRATE = "96k"
+LOGO = os.path.join(BASE_DIR, "logo.png")
 
 RESTART_DELAY = 5
 
-# ============================================================
-# RENKLER
-# ============================================================
-
-WHITE = "white"
-RED = "red"
-BLACK = "black"
-YELLOW = "yellow"
+VIDEO_SIZE = "1280x720"
+VIDEO_BITRATE = "2000k"
+AUDIO_BITRATE = "96k"
 
 # ============================================================
-# BAŞLANGIÇ
+# EKRAN
 # ============================================================
 
 os.system("title ZEM TV HABER - CANLI YAYIN")
@@ -51,19 +41,22 @@ print("==============================================")
 print("")
 
 # ============================================================
-# FFmpeg KONTROL
+# FFMPEG
 # ============================================================
 
-if not os.path.isfile(FFMPEG):
+if not os.path.exists(FFMPEG):
+
     print("[HATA] FFmpeg bulunamadi:")
     print(FFMPEG)
+
     input("Enter'a basin...")
     sys.exit(1)
 
-print("[OK] FFmpeg bulundu:")
+print("[OK] FFmpeg:")
 print(FFMPEG)
 
 try:
+
     test = subprocess.run(
         [FFMPEG, "-version"],
         stdout=subprocess.PIPE,
@@ -73,303 +66,297 @@ try:
     )
 
     if test.returncode != 0:
-        print("[HATA] FFmpeg baslatilamadi.")
+
+        print("[HATA] FFmpeg calismiyor.")
         print(test.stderr)
+
         input("Enter'a basin...")
         sys.exit(1)
 
-    first_line = test.stdout.splitlines()[0] if test.stdout else "FFmpeg"
-    print("[OK]", first_line)
+    print("[OK] FFmpeg calisiyor.")
 
 except Exception as e:
-    print("[HATA] FFmpeg kontrol hatasi:", e)
+
+    print("[HATA] FFmpeg kontrol hatasi:")
+    print(e)
+
     input("Enter'a basin...")
     sys.exit(1)
 
 # ============================================================
-# LOGO KONTROL
+# LOGO
 # ============================================================
 
-if os.path.isfile(LOGO):
+if os.path.exists(LOGO):
+
     print("[OK] Logo bulundu:")
     print(LOGO)
+
 else:
+
     print("[UYARI] logo.png bulunamadi.")
-    print("Logo olmadan devam edilecek.")
+    print("[BILGI] Logo olmadan devam edilecek.")
 
 # ============================================================
 # WINDOWS SAATI
 # ============================================================
 
-print("[OK] Windows saati:", datetime.now().strftime("%d.%m.%Y %H:%M:%S"))
+def windows_time():
+
+    return datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+
 
 # ============================================================
-# M3U8 KONTROL
-# ============================================================
-
-print("")
-print("[KONTROL] M3U8 kaynagi kontrol ediliyor...")
-print(SOURCE)
-
-try:
-    req = urllib.request.Request(
-        SOURCE,
-        headers={
-            "User-Agent": "Mozilla/5.0"
-        }
-    )
-
-    with urllib.request.urlopen(req, timeout=15) as response:
-        data = response.read(2048)
-
-    if data:
-        print("[OK] M3U8 kaynagina ulasildi.")
-    else:
-        print("[UYARI] M3U8 bos cevap verdi.")
-
-except Exception as e:
-    print("[UYARI] M3U8 kontrolu basarisiz:")
-    print(str(e))
-    print("[BILGI] FFmpeg yine de yayini baslatmayi deneyecek.")
-
-# ============================================================
-# FFmpeg FILTER
-# ============================================================
-
-def build_filter():
-
-    filters = []
-
-    # --------------------------------------------------------
-    # Logo
-    # --------------------------------------------------------
-
-    if os.path.isfile(LOGO):
-
-        logo_path = LOGO.replace("\\", "/")
-        logo_path = logo_path.replace(":", "\\:")
-
-        filters.append(
-            "movie='{}'[logo]".format(logo_path)
-        )
-
-        filters.append(
-            "[logo]scale=150:-1[lg]"
-        )
-
-        filters.append(
-            "[0:v][lg]overlay=W-w-25:25[v1]"
-        )
-
-        current = "[v1]"
-
-    else:
-        current = "[0:v]"
-
-    # --------------------------------------------------------
-    # ZEM TV HABER
-    # --------------------------------------------------------
-
-    filters.append(
-        "{}drawtext="
-        "fontfile='C\\:/Windows/Fonts/arial.ttf':"
-        "text='ZEM TV HABER':"
-        "fontcolor=white:"
-        "fontsize=25:"
-        "box=1:"
-        "boxcolor=black@0.65:"
-        "boxborderw=8:"
-        "x=25:"
-        "y=25"
-        "[v2]".format(current)
-    )
-
-    # --------------------------------------------------------
-    # CANLI
-    # --------------------------------------------------------
-
-    filters.append(
-        "[v2]drawtext="
-        "fontfile='C\\:/Windows/Fonts/arial.ttf':"
-        "text='CANLI':"
-        "fontcolor=red:"
-        "fontsize=22:"
-        "box=1:"
-        "boxcolor=black@0.70:"
-        "boxborderw=7:"
-        "x=25:"
-        "y=72"
-        "[v3]"
-    )
-
-    # --------------------------------------------------------
-    # WINDOWS SAATI
-    # --------------------------------------------------------
-
-    filters.append(
-        "[v3]drawtext="
-        "fontfile='C\\:/Windows/Fonts/arial.ttf':"
-        "text='%{localtime\\:%d.%m.%Y %H\\\\:%M\\\\:%S}':"
-        "fontcolor=white:"
-        "fontsize=21:"
-        "box=1:"
-        "boxcolor=black@0.70:"
-        "boxborderw=7:"
-        "x=25:"
-        "y=112"
-        "[v4]"
-    )
-
-    # --------------------------------------------------------
-    # ALT HABER BANDI
-    # --------------------------------------------------------
-
-    filters.append(
-        "[v4]drawbox="
-        "x=0:"
-        "y=650:"
-        "w=iw:"
-        "h=70:"
-        "color=black@0.80:"
-        "t=fill"
-        "[v5]"
-    )
-
-    # --------------------------------------------------------
-    # ZEM TV
-    # --------------------------------------------------------
-
-    filters.append(
-        "[v5]drawtext="
-        "fontfile='C\\:/Windows/Fonts/arial.ttf':"
-        "text='ZEM TV HABER':"
-        "fontcolor=red:"
-        "fontsize=24:"
-        "x=25:"
-        "y=663"
-        "[v6]"
-    )
-
-    # --------------------------------------------------------
-    # ALT YAZI
-    # --------------------------------------------------------
-
-    filters.append(
-        "[v6]drawtext="
-        "fontfile='C\\:/Windows/Fonts/arial.ttf':"
-        "text='SON DAKIKA  |  ZEM TV HABER  |  CANLI YAYIN  |  Guncel haberler ve gelismeler':"
-        "fontcolor=white:"
-        "fontsize=21:"
-        "x=230:"
-        "y=665"
-        "[vout]"
-    )
-
-    return ";".join(filters)
-
-# ============================================================
-# YAYIN BASLAT
+# YAYIN
 # ============================================================
 
 def start_stream():
+
+    current_time = windows_time()
 
     print("")
     print("==============================================")
     print("           YAYIN BASLATILIYOR")
     print("==============================================")
     print("")
-    print("[KAYNAK]")
-    print(SOURCE)
-    print("")
-    print("[RTMP]")
-    print(RTMP)
-    print("")
-    print("[VIDEO] 1280x720")
-    print("[VIDEO BITRATE]", VIDEO_BITRATE)
-    print("[AUDIO BITRATE]", AUDIO_BITRATE)
+
+    print("[SAAT]", current_time)
+    print("[M3U8]", SOURCE)
+    print("[RTMP]", RTMP)
     print("")
 
-    filter_complex = build_filter()
+    # --------------------------------------------------------
+    # VIDEO FILTRE
+    # --------------------------------------------------------
 
-    command = [
-        FFMPEG,
+    video_filter = (
+        "scale=1280:720,"
+        "drawbox=x=0:y=0:w=1280:h=55:"
+        "color=black@0.65:t=fill,"
+        "drawtext="
+        "fontfile=Arial.ttf:"
+        "text='ZEM TV HABER':"
+        "fontcolor=white:"
+        "fontsize=25:"
+        "x=25:"
+        "y=14,"
+        "drawtext="
+        "fontfile=Arial.ttf:"
+        "text='CANLI':"
+        "fontcolor=red:"
+        "fontsize=23:"
+        "x=220:"
+        "y=15,"
+        "drawbox=x=0:y=650:w=1280:h=70:"
+        "color=black@0.85:t=fill,"
+        "drawtext="
+        "fontfile=Arial.ttf:"
+        "text='ZEM TV HABER':"
+        "fontcolor=red:"
+        "fontsize=23:"
+        "x=20:"
+        "y=663,"
+        "drawtext="
+        "fontfile=Arial.ttf:"
+        "text='SON DAKIKA | CANLI YAYIN | GUNCEL HABERLER':"
+        "fontcolor=white:"
+        "fontsize=21:"
+        "x=230:"
+        "y=664"
+    )
 
-        "-hide_banner",
+    # --------------------------------------------------------
+    # LOGO VARSA
+    # --------------------------------------------------------
 
-        "-reconnect", "1",
-        "-reconnect_streamed", "1",
-        "-reconnect_delay_max", "5",
+    if os.path.exists(LOGO):
 
-        "-user_agent",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 Chrome/140.0 Safari/537.36",
+        logo_filter = (
+            "[1:v]scale=150:-1[logo];"
+            "[0:v][logo]overlay=W-w-25:20,"
+            + video_filter
+        )
 
-        "-i",
-        SOURCE,
+        filter_complex = logo_filter
 
-        "-filter_complex",
-        filter_complex,
+    else:
 
-        "-map",
-        "[vout]",
+        filter_complex = video_filter
 
-        "-map",
-        "0:a?",
+    # --------------------------------------------------------
+    # KOMUT
+    # --------------------------------------------------------
 
-        "-c:v",
-        "libx264",
+    if os.path.exists(LOGO):
 
-        "-preset",
-        "veryfast",
+        command = [
 
-        "-tune",
-        "zerolatency",
+            FFMPEG,
 
-        "-pix_fmt",
-        "yuv420p",
+            "-hide_banner",
 
-        "-s",
-        "1280x720",
+            "-reconnect",
+            "1",
 
-        "-b:v",
-        VIDEO_BITRATE,
+            "-reconnect_streamed",
+            "1",
 
-        "-maxrate",
-        VIDEO_BITRATE,
+            "-reconnect_delay_max",
+            "5",
 
-        "-bufsize",
-        "4000k",
+            "-user_agent",
+            "Mozilla/5.0",
 
-        "-r",
-        "25",
+            "-i",
+            SOURCE,
 
-        "-g",
-        "50",
+            "-loop",
+            "1",
 
-        "-c:a",
-        "aac",
+            "-i",
+            LOGO,
 
-        "-b:a",
-        AUDIO_BITRATE,
+            "-filter_complex",
+            filter_complex,
 
-        "-ar",
-        "44100",
+            "-map",
+            "[v]",
 
-        "-ac",
-        "2",
+            "-map",
+            "0:a?",
 
-        "-f",
-        "flv",
+            "-c:v",
+            "libx264",
 
-        RTMP
-    ]
+            "-preset",
+            "veryfast",
+
+            "-tune",
+            "zerolatency",
+
+            "-pix_fmt",
+            "yuv420p",
+
+            "-b:v",
+            VIDEO_BITRATE,
+
+            "-maxrate",
+            VIDEO_BITRATE,
+
+            "-bufsize",
+            "4000k",
+
+            "-r",
+            "25",
+
+            "-g",
+            "50",
+
+            "-c:a",
+            "aac",
+
+            "-b:a",
+            AUDIO_BITRATE,
+
+            "-ar",
+            "44100",
+
+            "-ac",
+            "2",
+
+            "-f",
+            "flv",
+
+            RTMP
+        ]
+
+    else:
+
+        command = [
+
+            FFMPEG,
+
+            "-hide_banner",
+
+            "-reconnect",
+            "1",
+
+            "-reconnect_streamed",
+            "1",
+
+            "-reconnect_delay_max",
+            "5",
+
+            "-user_agent",
+            "Mozilla/5.0",
+
+            "-i",
+            SOURCE,
+
+            "-vf",
+            video_filter,
+
+            "-map",
+            "0:v",
+
+            "-map",
+            "0:a?",
+
+            "-c:v",
+            "libx264",
+
+            "-preset",
+            "veryfast",
+
+            "-tune",
+            "zerolatency",
+
+            "-pix_fmt",
+            "yuv420p",
+
+            "-b:v",
+            VIDEO_BITRATE,
+
+            "-maxrate",
+            VIDEO_BITRATE,
+
+            "-bufsize",
+            "4000k",
+
+            "-r",
+            "25",
+
+            "-g",
+            "50",
+
+            "-c:a",
+            "aac",
+
+            "-b:a",
+            AUDIO_BITRATE,
+
+            "-ar",
+            "44100",
+
+            "-ac",
+            "2",
+
+            "-f",
+            "flv",
+
+            RTMP
+        ]
 
     print("[FFmpeg] Baslatiliyor...")
     print("")
-    print("[✓] VIDEO AKISI BEKLENIYOR...")
-    print("[✓] SES AKISI BEKLENIYOR...")
-    print("[✓] RTMP BAGLANTISI BEKLENIYOR...")
+    print("[✓] VIDEO AKISI BEKLENIYOR")
+    print("[✓] SES AKISI BEKLENIYOR")
+    print("[✓] RTMP BAGLANTISI BEKLENIYOR")
     print("")
+
+    # --------------------------------------------------------
+    # FFmpeg
+    # --------------------------------------------------------
 
     try:
 
@@ -383,54 +370,61 @@ def start_stream():
 
     except Exception as e:
 
-        print("")
         print("[HATA] FFmpeg baslatilamadi:")
         print(e)
+
         return
 
-    started = False
+    aktif = False
+
+    # --------------------------------------------------------
+    # LOG OKU
+    # --------------------------------------------------------
 
     try:
 
         for line in process.stdout:
 
-            line = line.rstrip()
+            line = line.strip()
 
             if not line:
                 continue
 
-            lower = line.lower()
-
-            # FFmpeg loglarini goster
             print("[FFmpeg]", line)
 
-            if "frame=" in lower and not started:
-                started = True
+            low = line.lower()
+
+            if "frame=" in low and not aktif:
+
+                aktif = True
 
                 print("")
                 print("==============================================")
-                print("[✓] VIDEO KARELERI AKIYOR")
-                print("[✓] YAYIN AKTIF")
+                print("        ✓ VIDEO KARELERI AKIYOR")
+                print("        ✓ YAYIN AKTIF")
                 print("==============================================")
                 print("")
+
+            if "error" in low:
+
+                print("[FFmpeg HATA]", line)
 
     except Exception as e:
 
-        print("[UYARI] FFmpeg okuma hatasi:", e)
+        print("[UYARI] FFmpeg log hatasi:")
+        print(e)
 
-    finally:
+    try:
 
-        try:
-            process.wait()
-        except:
-            pass
+        process.wait()
+
+    except:
+
+        pass
 
     print("")
-    print("==============================================")
     print("[UYARI] FFmpeg kapandi.")
-    print("==============================================")
-
-    return process.returncode
+    print("[SISTEM] 5 saniye sonra yeniden baslatilacak.")
 
 # ============================================================
 # ANA DONGU
@@ -440,26 +434,17 @@ while True:
 
     now = datetime.now()
 
-    # 03:00 - 04:00 arasi yayin kapali
+    # 03:00 - 04:00
     if now.hour == 3:
 
         print("")
-        print("[UYKU] 03:00-04:00 arasi yayin kapali.")
-        print("[BILGI] Windows saati:",
-              now.strftime("%d.%m.%Y %H:%M:%S"))
+        print("[UYKU] 03:00 - 04:00 yayin kapali.")
+        print("[SAAT]", windows_time())
 
         time.sleep(60)
+
         continue
 
-    print("")
-    print("[SISTEM] Windows saati:",
-          now.strftime("%d.%m.%Y %H:%M:%S"))
-
-    result = start_stream()
-
-    print("")
-    print("[SISTEM] {} saniye sonra tekrar denenecek.".format(
-        RESTART_DELAY
-    ))
+    start_stream()
 
     time.sleep(RESTART_DELAY)
