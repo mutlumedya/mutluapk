@@ -13,7 +13,7 @@ import threading
 # ============================================================
 # ZEM TV COCUK
 # M3U8 -> RTMP
-# LOGO (SAG UST) + DINAMIK ZEM TV/HABERLER + CANLI SAAT + PERIYODIK BANT
+# LOGO (SAG UST) + DINAMIK ZEM TV/HABERLER + CANLI SAAT + INCE ALT BANT
 # ============================================================
 
 
@@ -188,8 +188,8 @@ def create_filter():
         # LOGO SAĞ ÜST KÖŞE (20 piksel içeride)
         "[base][logo]overlay=W-w-20:20[v1];"
 
-        # 1. ALT BANT ZEMİNİ VE KAYAN YAZI (Sadece her 5 dakikada bir ilk 25 sn görünür)
-        "[v1]drawbox=x=280:y=640:w=1000:h=80:color=0x111827@0.94:t=fill:"
+        # 1. ALT BANT ZEMİNİ VE KAYAN YAZI (Yükseklik 50px, en altta y=670)
+        "[v1]drawbox=x=270:y=670:w=1010:h=50:color=0x111827@0.94:t=fill:"
         f"enable='{active_expr}'[v_box];"
 
         "[v_box]drawtext="
@@ -197,39 +197,38 @@ def create_filter():
         f"textfile='{ticker}':"
         "reload=1:"
         "fontcolor=white:"
-        "fontsize=24:"
+        "fontsize=20:"
         "borderw=2:"
         "bordercolor=black:"
         "x='1280 - mod(t*100\\, 1250)':"
-        "y=667:"
+        "y=683:"
         f"enable='{active_expr}'[v_ticker];"
 
-        # 2. SOL KISIM ANA ZEMİN (Sabit w=150)
-        "[v_ticker]drawbox=x=0:y=640:w=150:h=80:color=0x1f2937@1.0:t=fill[v2];"
+        # 2. SOL KISIM ANA ZEMİN (Sabit w=130, y=670, h=50)
+        "[v_ticker]drawbox=x=0:y=670:w=130:h=50:color=0x1f2937@1.0:t=fill[v2];"
 
-        # 3. SAAT KUTUSU (Sabit w=130, x=150) -> Kayan yazının saatin üstüne geçmesini engeller
-        "[v2]drawbox=x=150:y=640:w=130:h=80:color=0x374151@1.0:t=fill[v3];"
+        # 3. SAAT KUTUSU (Sabit w=140, x=130, y=670, h=50) -> Yazının saatin üstüne geçmesini engeller
+        "[v2]drawbox=x=130:y=670:w=140:h=50:color=0x374151@1.0:t=fill[v3];"
 
         # 4. CANLI SAAT (Sabit)
         "[v3]drawtext="
         f"fontfile='{font}':"
         "text='%{localtime\\:%H\\\\\\:%M}':"
         "fontcolor=white:"
-        "fontsize=26:"
-        "x=182:"
-        "y=666:"
+        "fontsize=22:"
+        "x=168:"
+        "y=683:"
         "borderw=2:"
         "bordercolor=black[v4];"
 
         # 5. SOL KISIM METNİ: Bant yokken "ZEM TV", bant aktifken kırmızı "HABERLER"
-        # İki metni çakıştırmadan 'enable' mantığıyla tek akışta yazdırıyoruz
         "[v4]drawtext="
         f"fontfile='{font}':"
         "text='ZEM TV':"
         "fontcolor=white:"
-        "fontsize=22:"
+        "fontsize=18:"
         "x=35:"
-        "y=668:"
+        "y=685:"
         "borderw=2:"
         "bordercolor=black:"
         f"enable='lte({cycle_expr},0) + gt({cycle_expr},25)'[v_text1];"
@@ -238,9 +237,9 @@ def create_filter():
         f"fontfile='{font}':"
         "text='HABERLER':"
         "fontcolor=red:"
-        "fontsize=22:"
-        "x=28:"
-        "y=668:"
+        "fontsize=18:"
+        "x=25:"
+        "y=685:"
         "borderw=2:"
         "bordercolor=black:"
         f"enable='{active_expr}'[vout]"
