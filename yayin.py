@@ -29,7 +29,7 @@ import requests
 
 GITHUB_M3U_URL = "https://raw.githubusercontent.com/mutlumedya/mutluapk/refs/heads/main/Akasya.m3u"
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101/fluxakasya"
-LOGO_URL = "https://i.hizliresim.com/7pcmsgos.png"
+LOGO_URL = "https://i.hizliresim.com/2m4pmeki.png"
 
 FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"
 FONT = r"C:\Windows\Fonts\arial.ttf"
@@ -115,7 +115,7 @@ def fetch_m3u_and_update_playlist_file():
                                     current_title = parts[1].strip()
                             elif line.startswith("http"):
                                 lower_link = line.lower()
-                                if any(ext in lower_link for ext in valid_extensions):
+                                if any(ext in lower_link for ext in valid_extensions) or "workers.dev" in lower_link:
                                     if line not in existing_urls:
                                         f.write(f"{current_title}|{line}\n")
                                         existing_urls.add(line)
@@ -202,14 +202,17 @@ def create_filter():
 def build_command(video_url):
     filters = create_filter()
     
+    # Sadece vidrame linkleri için referer ekle, workers.dev gibi diğer linklerde boş bırak.
+    headers = []
+    if "vidrame" in video_url.lower():
+        headers = ["-headers", "Referer: https://vidrame.pro/\r\n"]
+        
+    format_args = []
     if ".txt" in video_url.lower() or ".m3u8" in video_url.lower():
         format_args = [
             "-allowed_extensions", 
-            "jpg,jpeg,png,txt,ts,m3u8,mp4,mkv,avi,m4s,m4v,mpg,mpeg,mpegts,mov,ogg,vob,wav", 
-            "-f", "hls"
+            "jpg,jpeg,png,txt,ts,m3u8,mp4,mkv,avi,m4s,m4v,mpg,mpeg,mpegts,mov,ogg,vob,wav"
         ]
-    else:
-        format_args = []
     
     command = [
         FFMPEG,
@@ -220,9 +223,8 @@ def build_command(video_url):
         "-reconnect", "1", "-reconnect_streamed", "1",
         "-reconnect_at_eof", "1", "-reconnect_delay_max", "10",
         "-rw_timeout", "20000000",
-        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
-        "-headers", "Referer: https://vidrame.pro/\r\n"
-    ] + format_args + [
+        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
+    ] + headers + format_args + [
         "-i", video_url,
         "-loop", "1", "-i", str(LOGO_FILE),
         "-filter_complex", filters,
