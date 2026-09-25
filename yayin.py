@@ -161,8 +161,8 @@ def text_update_loop():
         time.sleep(300)
 
 def fetch_m3u_and_update_playlist_file():
-    # Geçerli kabul edilecek video/yayın uzantıları
-    valid_extensions = ['.m3u8', '.mp4', '.mkv', '.ts', '.avi']
+    # Gecerli kabul edilecek video/yayin uzantilari (.txt eklendi)
+    valid_extensions = ['.m3u8', '.mp4', '.mkv', '.ts', '.avi', '.txt']
     
     while True:
         try:
@@ -182,7 +182,6 @@ def fetch_m3u_and_update_playlist_file():
                         for link in all_urls:
                             lower_link = link.lower()
                             
-                            # Eger linkin icinde belirledigimiz video uzantilarindan biri varsa kabul et
                             if any(ext in lower_link for ext in valid_extensions):
                                 if link not in existing_urls:
                                     f.write(link + "\n")
@@ -293,6 +292,10 @@ def create_filter():
 
 def build_command(video_url):
     filters = create_filter()
+    
+    # EKLENTI: Link .txt veya .m3u8 iceriyorsa FFmpeg'e yayin formati zorlanir.
+    format_args = ["-f", "hls"] if (".txt" in video_url.lower() or ".m3u8" in video_url.lower()) else []
+    
     command = [
         FFMPEG,
         "-hide_banner", "-loglevel", "info",
@@ -302,7 +305,9 @@ def build_command(video_url):
         "-reconnect", "1", "-reconnect_streamed", "1",
         "-reconnect_at_eof", "1", "-reconnect_delay_max", "10",
         "-rw_timeout", "20000000",
-        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        # EKLENTI: Tarayici engeline takilmamak icin gercek Chrome kimligi eklendi
+        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
+    ] + format_args + [
         "-i", video_url,
         "-loop", "1", "-i", str(LOGO_FILE),
         "-filter_complex", filters,
@@ -391,6 +396,10 @@ def main():
                         current_video = lines[current_index]
 
         if current_video:
+            # EKLENTI: Vidrame linklerini otomatik donusturme (master.m3u8 -> 1080.txt)
+            if "vidrame.pro" in current_video and "master.m3u8" in current_video:
+                current_video = current_video.replace("master.m3u8", "1080.txt")
+                
             log(f"Oynatiliyor (Sira {current_index + 1}/{total_videos}): {current_video}")
             
             code = start_stream(current_video)
