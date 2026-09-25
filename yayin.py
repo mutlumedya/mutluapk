@@ -31,7 +31,8 @@ import requests
 # YAYIN VE GITHUB AYARLARI
 # ============================================================
 
-GITHUB_M3U_URL = "https://raw.githubusercontent.com/kimbumuratyavuz/capcanli/refs/heads/main/sonfilmler.m3u"
+# YENI EKLENEN CALISAN M3U LINKI
+GITHUB_M3U_URL = "https://raw.githubusercontent.com/kimbumuratyavuz/capcanli/refs/heads/main/film2026.m3u"
 
 RTMP_URL = (
     "rtmp://ssh101.bozztv.com:1935/ssh101/zemtv"
@@ -292,8 +293,6 @@ def create_filter():
 def build_command(video_url):
     filters = create_filter()
     
-    # EKLENTI: "ALL" kullanmak yerine gizlenmiş (.jpg, .png) 
-    # ve normal video (.ts, .m3u8, .txt vb.) uzantıların tümünü açıkça tanımladık.
     if ".txt" in video_url.lower() or ".m3u8" in video_url.lower():
         format_args = [
             "-allowed_extensions", 
@@ -313,7 +312,6 @@ def build_command(video_url):
         "-reconnect_at_eof", "1", "-reconnect_delay_max", "10",
         "-rw_timeout", "20000000",
         "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
-        # EKLENTI: Gizli parcalari alirken sunucunun korumasina takilmamak icin Referer eklendi
         "-headers", "Referer: https://vidrame.pro/\r\n"
     ] + format_args + [
         "-i", video_url,
