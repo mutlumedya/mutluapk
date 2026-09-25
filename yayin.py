@@ -24,10 +24,9 @@ install_and_import("requests")
 import requests
 
 # ============================================================
-# YAYIN VE GITHUB AYARLARI
+# YAYIN AYARLARI
 # ============================================================
 
-GITHUB_M3U_URL = "https://raw.githubusercontent.com/mutlumedya/mutluapk/refs/heads/main/Akasya.m3u"
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101/fluxakasya"
 LOGO_URL = "https://i.hizliresim.com/2m4pmeki.png"
 
@@ -39,7 +38,7 @@ BASE_DIR = Path(__file__).resolve().parent
 LOGO_FILE = BASE_DIR / "zemtv_logo.png"
 TITLE_FILE = BASE_DIR / "current_title.txt"
 
-# FİLMLERİN KAYDEDİLECEĞİ VE OKUNACAĞI TXT DOSYASI
+# FİLMLERİN OKUNACAĞI TXT DOSYASI
 PLAYLIST_FILE = BASE_DIR / "zemtv_playlist.txt"
 file_lock = threading.Lock()
 
@@ -81,8 +80,6 @@ def write_file(path, text):
 # ============================================================
 # URL AYIKLAMA
 # Sadece gerçek URL kısmını alır, başlık vs. varsa atar.
-# Örnek: "http://x.com/a.m3u8?ID=1 | Akasya 1. Bölüm"
-#     -> "http://x.com/a.m3u8?ID=1"
 # ============================================================
 
 def extract_url(raw_line):
@@ -92,22 +89,18 @@ def extract_url(raw_line):
     if not line:
         return None
     
-    # Önce '|' varsa ilk parçayı al
     if "|" in line:
         line = line.split("|")[0].strip()
     
-    # Boşluk varsa ilk parçayı al (URL'de boşluk olmaz)
     if " " in line:
         line = line.split(" ")[0].strip()
     
-    # http ile başlamıyorsa geçersiz
     if not line.lower().startswith("http"):
         return None
     
     return line
 
 def extract_title(raw_line):
-    """M3U satırındaki başlık kısmını (varsa) alır, yoksa None döner."""
     if not raw_line:
         return None
     line = raw_line.strip()
@@ -118,89 +111,6 @@ def extract_title(raw_line):
             if title:
                 return title
     return None
-
-# ============================================================
-# M3U ÇEKME VE GÜNCELLEME DÖNGÜSÜ
-# M3U'da ne varsa AYNEN alır, kafasına göre isim uydurmaz.
-# ============================================================
-
-def fetch_m3u_and_update_playlist_file():
-    valid_extensions = ['.m3u8', '.mp4', '.mkv', '.ts', '.avi', '.txt']
-    
-    while True:
-        try:
-            log("GitHub M3U listesi kontrol ediliyor...")
-            res = requests.get(GITHUB_M3U_URL, timeout=10)
-            if res.status_code == 200:
-                raw_lines = res.text.splitlines()
-                
-                with file_lock:
-                    # Mevcut URL'leri topla (tekrar eklememek için)
-                    existing_urls = set()
-                    if PLAYLIST_FILE.exists():
-                        with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
-                            for line in f:
-                                line = line.strip()
-                                if not line:
-                                    continue
-                                # Satırdaki URL kısmını çıkar
-                                u = extract_url(line)
-                                if u:
-                                    existing_urls.add(u)
-                                else:
-                                    # 'isim|url' formatında ise url kısmını al
-                                    if "|" in line:
-                                        existing_urls.add(line.split("|", 1)[1].strip())
-
-                    new_items = 0
-                    
-                    with open(PLAYLIST_FILE, "a", encoding="utf-8", newline="\n") as f:
-                        for raw_line in raw_lines:
-                            line = raw_line.strip()
-                            if not line:
-                                continue
-                            
-                            # Yorum/EXTINF satırlarını atla
-                            if line.startswith("#"):
-                                continue
-                            
-                            # Satırda http geçmiyorsa atla
-                            if "http" not in line.lower():
-                                continue
-                            
-                            # URL'yi ayıkla
-                            url = extract_url(line)
-                            if not url:
-                                continue
-                            
-                            # Uzantı/workers.dev kontrolü
-                            lower_url = url.lower()
-                            if not (any(ext in lower_url for ext in valid_extensions) or "workers.dev" in lower_url):
-                                continue
-                            
-                            # Zaten varsa atla
-                            if url in existing_urls:
-                                continue
-                            
-                            # M3U'daki satırda başlık var mı?
-                            title = extract_title(line)
-                            
-                            if title:
-                                # 'Başlık|URL' formatında yaz
-                                f.write(f"{title}|{url}\n")
-                            else:
-                                # Sadece URL yaz
-                                f.write(f"{url}\n")
-                            
-                            existing_urls.add(url)
-                            new_items += 1
-                
-                if new_items > 0:
-                    log(f"{new_items} yeni gecerli video linki 'zemtv_playlist.txt' dosyasina eklendi.")
-        except Exception as e:
-            log("M3U guncelleme hatasi: " + str(e))
-        
-        time.sleep(900)
 
 # ============================================================
 # LOGO İNDİR
@@ -262,20 +172,19 @@ def create_filter():
         "[v_t2]drawtext="
         f"fontfile='{font}':text='%{{localtime\\:%H\\\\\\:%M}}':fontcolor=white:fontsize=22:x=165:y=683:borderw=2:bordercolor=black[v_t3];"
         
-        # Sag Alt Köşede M3U'dan Çekilen Film/Video İsmi
+        # Sag Alt Köşede Video İsmi
         "[v_t3]drawtext="
         f"fontfile='{font}':textfile='{title_f}':reload=1:fontcolor=white:fontsize=24:x=W-tw-20:y=H-th-20:box=1:boxcolor=0x111827@0.8:boxborderw=8[vout]"
     )
     return filter_text
 
 # ============================================================
-# FFMPEG KOMUTU  (OTOMATİK ALGILAMA)
+# FFMPEG KOMUTU
 # ============================================================
 
 def build_command(video_url):
     filters = create_filter()
     
-    # Sadece vidrame linkleri için referer ekle
     headers = []
     if "vidrame" in video_url.lower():
         headers = ["-headers", "Referer: https://vidrame.pro/\r\n"]
@@ -353,10 +262,7 @@ def main():
     check_files()
     download_logo()
 
-    # Arka planda M3U güncelleme döngüsünü başlat
-    threading.Thread(target=fetch_m3u_and_update_playlist_file, daemon=True).start()
-
-    time.sleep(5)
+    time.sleep(2)
 
     current_index = 0
 
@@ -387,7 +293,6 @@ def main():
                             current_video_url = extract_url(parts[1])
                         else:
                             current_video_url = extract_url(line_data)
-                            # Başlık yoksa varsayılan kalsın
                             if not current_video_title:
                                 current_video_title = "Akasya Durağı"
 
