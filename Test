@@ -1,0 +1,1 @@
+"C:\ffmpeg\bin\ffmpeg.exe" -hide_banner -i "https://akasya.mutlumedya.workers.dev/index.m3u8?ID=1" -t 10 -f null -
