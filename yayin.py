@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime
 import threading
 import time
-import re  # Linkleri ayrıştırmak için eklendi
+import re
 
 # ============================================================
 # GEREKLİ KÜTÜPHANELERİ OTOMATİK KONTROL ET VE İNDİR
@@ -31,15 +31,14 @@ import requests
 # YAYIN VE GITHUB AYARLARI
 # ============================================================
 
-# VERDİĞİNİZ GITHUB M3U LİNKİ
 GITHUB_M3U_URL = "https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/a087969df4b3eb542808fe6144fb3e8ffee28ae6/nuvio_parcalari/nuvio_u.m3u"
 
 RTMP_URL = (
-    "rtmp://ssh101.bozztv.com:1935/ssh101/zemtv"
+    "rtmp://ssh101.bozztv.com:1935/ssh101/zemtvcocuk"
 )
 
 LOGO_URL = (
-    "https://i.hizliresim.com/ko9s4ezf.png"
+    "https://i.hizliresim.com/7pcmsgos.png"
 )
 
 FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"
@@ -170,12 +169,10 @@ def fetch_m3u_and_update_queue():
             log("GitHub M3U listesi kontrol ediliyor...")
             res = requests.get(GITHUB_M3U_URL, timeout=10)
             if res.status_code == 200:
-                # Metindeki tüm http ve https linklerini bul (Regex kullanarak)
                 all_urls = re.findall(r'(https?://[^\s"\'<>]+)', res.text)
                 
                 new_items = 0
                 for link in all_urls:
-                    # Eger link bir resim dosyası (logo) ise bunu yoksay
                     if link.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
                         continue
                         
@@ -293,7 +290,6 @@ def build_command(video_url):
     command = [
         FFMPEG,
         "-hide_banner", "-loglevel", "info",
-        # FFMPEG ZORLAYICI OKUMA AYARLARI EKLENDI
         "-analyzeduration", "100000000", 
         "-probesize", "100000000",
         "-fflags", "+genpts+discardcorrupt",
@@ -359,6 +355,8 @@ def start_stream(video_url):
 # ============================================================
 
 def main():
+    global video_queue, master_playlist
+    
     print("\nZEM TV COCUK - Kesintisiz Film/Dizi Yayin Sistemi Baslatiliyor...\n")
     check_files()
     download_logo()
