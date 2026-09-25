@@ -196,7 +196,7 @@ def create_filter():
     return filter_text
 
 # ============================================================
-# FFMPEG KOMUTU
+# FFMPEG KOMUTU  (OTOMATİK ALGILAMA - UZANTI KISITLAMASI YOK)
 # ============================================================
 
 def build_command(video_url):
@@ -206,14 +206,9 @@ def build_command(video_url):
     headers = []
     if "vidrame" in video_url.lower():
         headers = ["-headers", "Referer: https://vidrame.pro/\r\n"]
-        
-    format_args = []
-    if ".txt" in video_url.lower() or ".m3u8" in video_url.lower():
-        format_args = [
-            "-allowed_extensions", 
-            "jpg,jpeg,png,txt,ts,m3u8,mp4,mkv,avi,m4s,m4v,mpg,mpeg,mpegts,mov,ogg,vob,wav"
-        ]
     
+    # Uzantı kısıtlaması KALDIRILDI. FFmpeg kendi probe mekanizmasıyla
+    # M3U8 / MP4 / TS / MKV vb. formatları otomatik algılar.
     command = [
         FFMPEG,
         "-hide_banner", "-loglevel", "info",
@@ -224,7 +219,7 @@ def build_command(video_url):
         "-reconnect_at_eof", "1", "-reconnect_delay_max", "10",
         "-rw_timeout", "20000000",
         "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
-    ] + headers + format_args + [
+    ] + headers + [
         "-i", video_url,
         "-loop", "1", "-i", str(LOGO_FILE),
         "-filter_complex", filters,
