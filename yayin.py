@@ -161,7 +161,6 @@ def text_update_loop():
         time.sleep(300)
 
 def fetch_m3u_and_update_playlist_file():
-    # Gecerli kabul edilecek video/yayin uzantilari (.txt eklendi)
     valid_extensions = ['.m3u8', '.mp4', '.mkv', '.ts', '.avi', '.txt']
     
     while True:
@@ -293,9 +292,14 @@ def create_filter():
 def build_command(video_url):
     filters = create_filter()
     
-    # EKLENTI: .jpg olarak gizlenmis video parcalarina izin vermek icin '-allowed_extensions ALL' ekliyoruz
+    # EKLENTI: "ALL" kullanmak yerine gizlenmiş (.jpg, .png) 
+    # ve normal video (.ts, .m3u8, .txt vb.) uzantıların tümünü açıkça tanımladık.
     if ".txt" in video_url.lower() or ".m3u8" in video_url.lower():
-        format_args = ["-allowed_extensions", "ALL", "-f", "hls"]
+        format_args = [
+            "-allowed_extensions", 
+            "jpg,jpeg,png,txt,ts,m3u8,mp4,mkv,avi,m4s,m4v,mpg,mpeg,mpegts,mov,ogg,vob,wav", 
+            "-f", "hls"
+        ]
     else:
         format_args = []
     
@@ -308,8 +312,9 @@ def build_command(video_url):
         "-reconnect", "1", "-reconnect_streamed", "1",
         "-reconnect_at_eof", "1", "-reconnect_delay_max", "10",
         "-rw_timeout", "20000000",
-        # EKLENTI: Tarayici engeline takilmamak icin gercek Chrome kimligi eklendi
-        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
+        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+        # EKLENTI: Gizli parcalari alirken sunucunun korumasina takilmamak icin Referer eklendi
+        "-headers", "Referer: https://vidrame.pro/\r\n"
     ] + format_args + [
         "-i", video_url,
         "-loop", "1", "-i", str(LOGO_FILE),
@@ -399,7 +404,6 @@ def main():
                         current_video = lines[current_index]
 
         if current_video:
-            # EKLENTI: Vidrame linklerini otomatik donusturme (master.m3u8 -> 1080.txt)
             if "vidrame.pro" in current_video and "master.m3u8" in current_video:
                 current_video = current_video.replace("master.m3u8", "1080.txt")
                 
