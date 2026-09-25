@@ -1,1 +1,1 @@
-"C:\ffmpeg\bin\ffmpeg.exe" -hide_banner -i "https://akasya.mutlumedya.workers.dev/index.m3u8?ID=1" -t 10 -f null -
+Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n5.1-latest-win64-gpl-5.1.zip" -OutFile "C:\Users\Administrator\Downloads\ffmpeg-5.1.zip"
