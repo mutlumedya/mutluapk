@@ -78,39 +78,36 @@ def write_file(path, text):
         log("Dosya yazma hatasi: " + str(e))
 
 # ============================================================
-# URL AYIKLAMA
-# Sadece gerçek URL kısmını alır, başlık vs. varsa atar.
+# SATIR AYIKLAMA
+# Format: URL|İsim
+# Örnek: https://x.com/a.m3u8?ID=1|Akasya Durağı 1. Bölüm
 # ============================================================
 
-def extract_url(raw_line):
+def parse_line(raw_line):
+    """
+    Satırı (url, title) olarak döndürür.
+    Format: URL|İsim
+    '|' yoksa title None olur.
+    """
     if not raw_line:
-        return None
+        return None, None
     line = raw_line.strip()
     if not line:
-        return None
+        return None, None
     
-    if "|" in line:
-        line = line.split("|")[0].strip()
-    
-    if " " in line:
-        line = line.split(" ")[0].strip()
-    
-    if not line.lower().startswith("http"):
-        return None
-    
-    return line
-
-def extract_title(raw_line):
-    if not raw_line:
-        return None
-    line = raw_line.strip()
     if "|" in line:
         parts = line.split("|", 1)
-        if len(parts) > 1:
-            title = parts[1].strip()
-            if title:
-                return title
-    return None
+        url = parts[0].strip()
+        title = parts[1].strip() if len(parts) > 1 else None
+    else:
+        url = line
+        title = None
+    
+    # URL'nin geçerli olduğundan emin ol
+    if not url.lower().startswith("http"):
+        return None, None
+    
+    return url, title
 
 # ============================================================
 # LOGO İNDİR
@@ -262,6 +259,21 @@ def main():
     check_files()
     download_logo()
 
+    # Playlist dosyası yoksa boş oluştur
+    if not PLAYLIST_FILE.exists():
+        try:
+            with open(PLAYLIST_FILE, "w", encoding="utf-8", newline="\n") as f:
+                f.write("")
+            log(f"'{PLAYLIST_FILE.name}' dosyasi bulunamadi, bos olarak olusturuldu.")
+            log(f"Yol: {PLAYLIST_FILE}")
+        except Exception as e:
+            log(f"'{PLAYLIST_FILE.name}' olusturulamadi: {e}")
+            sys.exit(1)
+    else:
+        log(f"'{PLAYLIST_FILE.name}' bulundu: {PLAYLIST_FILE}")
+
+    log("Format: URL|İsim  (ornek: https://x.com/a.m3u8?ID=1|Akasya Durağı 1. Bölüm)")
+
     time.sleep(2)
 
     current_index = 0
@@ -283,18 +295,12 @@ def main():
                             current_index = 0
                             
                         line_data = lines[current_index]
-                        
-                        # Playlist satırı iki formatta olabilir:
-                        # 1) "Başlık|URL"
-                        # 2) "URL"
-                        if "|" in line_data:
-                            parts = line_data.split("|", 1)
-                            current_video_title = parts[0].strip()
-                            current_video_url = extract_url(parts[1])
+                        url, title = parse_line(line_data)
+                        current_video_url = url
+                        if title:
+                            current_video_title = title
                         else:
-                            current_video_url = extract_url(line_data)
-                            if not current_video_title:
-                                current_video_title = "Akasya Durağı"
+                            current_video_title = "Akasya Durağı"
 
         if current_video_url:
             if "vidrame.pro" in current_video_url and "master.m3u8" in current_video_url:
@@ -309,7 +315,7 @@ def main():
             current_index += 1
             time.sleep(2) 
         else:
-            log(f"Liste tamamen bos veya '{PLAYLIST_FILE.name}' henuz olusturulmadi. Bekleniyor...")
+            log(f"Liste bos. '{PLAYLIST_FILE}' dosyasina video linki ekleyin. Bekleniyor...")
             time.sleep(10)
 
 if __name__ == "__main__":
