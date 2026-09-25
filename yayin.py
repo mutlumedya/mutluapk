@@ -50,9 +50,9 @@ LOGO_FILE = BASE_DIR / "zemtv_logo.png"
 INFO_FILE = BASE_DIR / "zemtv_info.txt"
 TICKER_FILE = BASE_DIR / "zemtv_ticker.txt"
 
-# YENİ: FİLMLERİN KAYDEDİLECEĞİ VE OKUNACAĞI TXT DOSYASI
+# FİLMLERİN KAYDEDİLECEĞİ VE OKUNACAĞI TXT DOSYASI
 PLAYLIST_FILE = BASE_DIR / "zemtv_playlist.txt"
-file_lock = threading.Lock() # Dosya yazma/okuma çakışmasını engeller
+file_lock = threading.Lock()
 
 
 # ============================================================
@@ -161,40 +161,40 @@ def text_update_loop():
         time.sleep(300)
 
 def fetch_m3u_and_update_playlist_file():
+    # Geçerli kabul edilecek video/yayın uzantıları
+    valid_extensions = ['.m3u8', '.mp4', '.mkv', '.ts', '.avi']
+    
     while True:
         try:
             log("GitHub M3U listesi kontrol ediliyor...")
             res = requests.get(GITHUB_M3U_URL, timeout=10)
             if res.status_code == 200:
-                # Metindeki tüm http/https linklerini bul
                 all_urls = re.findall(r'(https?://[^\s"\'<>]+)', res.text)
                 
                 with file_lock:
-                    # Mevcut dosyayı oku (daha önce eklenenleri tekrar eklememek için)
                     existing_urls = set()
                     if PLAYLIST_FILE.exists():
                         with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
                             existing_urls = set(line.strip() for line in f if line.strip())
 
                     new_items = 0
-                    # Dosyaya yeni linkleri "append" (ekle) modunda yaz
                     with open(PLAYLIST_FILE, "a", encoding="utf-8") as f:
                         for link in all_urls:
-                            # Logoları/resimleri atla
-                            if link.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
-                                continue
+                            lower_link = link.lower()
                             
-                            if link not in existing_urls:
-                                f.write(link + "\n")
-                                existing_urls.add(link)
-                                new_items += 1
+                            # Eger linkin icinde belirledigimiz video uzantilarindan biri varsa kabul et
+                            if any(ext in lower_link for ext in valid_extensions):
+                                if link not in existing_urls:
+                                    f.write(link + "\n")
+                                    existing_urls.add(link)
+                                    new_items += 1
                 
                 if new_items > 0:
-                    log(f"{new_items} yeni film/dizi 'zemtv_playlist.txt' dosyasina eklendi.")
+                    log(f"{new_items} yeni gecerli video linki 'zemtv_playlist.txt' dosyasina eklendi.")
         except Exception as e:
             log("M3U guncelleme hatasi: " + str(e))
         
-        time.sleep(900) # 15 dakika bekle
+        time.sleep(900)
 
 
 # ============================================================
@@ -369,25 +369,21 @@ def main():
     threading.Thread(target=text_update_loop, daemon=True).start()
     threading.Thread(target=fetch_m3u_and_update_playlist_file, daemon=True).start()
 
-    # Arka plandaki işlemin ilk listeyi txt dosyasına yazması için bekleme süresi
     time.sleep(5)
 
-    current_index = 0  # Dosyadaki kaçıncı satırı oynattığımızı takip eder
+    current_index = 0
 
     while True:
         current_video = None
         total_videos = 0
         
         with file_lock:
-            # zemtv_playlist.txt dosyasını oku
             if PLAYLIST_FILE.exists():
                 with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
-                    # Boş olmayan tüm satırları listeye al
                     lines = [line.strip() for line in f if line.strip()]
                     total_videos = len(lines)
                     
                     if total_videos > 0:
-                        # Eğer dosyanın sonuna gelindiyse (yayının kesilmemesi için) en başa sar
                         if current_index >= total_videos:
                             log("Listenin sonuna gelindi. Yayin kesilmesin diye basa donuluyor...")
                             current_index = 0
@@ -397,12 +393,10 @@ def main():
         if current_video:
             log(f"Oynatiliyor (Sira {current_index + 1}/{total_videos}): {current_video}")
             
-            # Yayını başlat
             code = start_stream(current_video)
             
             log(f"Film Bitti. Siradaki icerige geciliyor...")
             
-            # Film bitince sırayı bir sonraki satıra geçir
             current_index += 1
             time.sleep(2) 
         else:
