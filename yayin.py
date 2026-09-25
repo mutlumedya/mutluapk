@@ -293,8 +293,11 @@ def create_filter():
 def build_command(video_url):
     filters = create_filter()
     
-    # EKLENTI: Link .txt veya .m3u8 iceriyorsa FFmpeg'e yayin formati zorlanir.
-    format_args = ["-f", "hls"] if (".txt" in video_url.lower() or ".m3u8" in video_url.lower()) else []
+    # EKLENTI: .jpg olarak gizlenmis video parcalarina izin vermek icin '-allowed_extensions ALL' ekliyoruz
+    if ".txt" in video_url.lower() or ".m3u8" in video_url.lower():
+        format_args = ["-allowed_extensions", "ALL", "-f", "hls"]
+    else:
+        format_args = []
     
     command = [
         FFMPEG,
