@@ -34,7 +34,7 @@ import requests
 GITHUB_M3U_URL = "https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/a087969df4b3eb542808fe6144fb3e8ffee28ae6/nuvio_parcalari/nuvio_u.m3u"
 
 RTMP_URL = (
-    "rtmp://ssh101.bozztv.com:1935/ssh101/zemtvcocuk"
+    "rtmp://ssh101.bozztv.com:1935/ssh101/zemtv"
 )
 
 LOGO_URL = (
@@ -50,11 +50,9 @@ LOGO_FILE = BASE_DIR / "zemtv_logo.png"
 INFO_FILE = BASE_DIR / "zemtv_info.txt"
 TICKER_FILE = BASE_DIR / "zemtv_ticker.txt"
 
-# --- KUYRUK SISTEMI DEGISKENLERI ---
-master_playlist = []       
-video_queue = []           
-played_urls = set()        
-queue_lock = threading.Lock()
+# YENİ: FİLMLERİN KAYDEDİLECEĞİ VE OKUNACAĞI TXT DOSYASI
+PLAYLIST_FILE = BASE_DIR / "zemtv_playlist.txt"
+file_lock = threading.Lock() # Dosya yazma/okuma çakışmasını engeller
 
 
 # ============================================================
@@ -143,7 +141,7 @@ def fetch_live_news_and_market():
 
 
 # ============================================================
-# YAZILARI VE M3U LİSTESİNİ GÜNCELLEME DÖNGÜLERİ
+# YAZILARI VE PLAYLIST DOSYASINI GÜNCELLEME DÖNGÜLERİ
 # ============================================================
 
 def update_text_files():
@@ -162,29 +160,37 @@ def text_update_loop():
             log("Metin guncelleme hatasi: " + str(e))
         time.sleep(300)
 
-def fetch_m3u_and_update_queue():
-    global video_queue, played_urls, master_playlist
+def fetch_m3u_and_update_playlist_file():
     while True:
         try:
             log("GitHub M3U listesi kontrol ediliyor...")
             res = requests.get(GITHUB_M3U_URL, timeout=10)
             if res.status_code == 200:
+                # Metindeki tüm http/https linklerini bul
                 all_urls = re.findall(r'(https?://[^\s"\'<>]+)', res.text)
                 
-                new_items = 0
-                for link in all_urls:
-                    if link.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
-                        continue
-                        
-                    with queue_lock:
-                        if link not in played_urls:
-                            video_queue.append(link)
-                            master_playlist.append(link)
-                            played_urls.add(link)
-                            new_items += 1
+                with file_lock:
+                    # Mevcut dosyayı oku (daha önce eklenenleri tekrar eklememek için)
+                    existing_urls = set()
+                    if PLAYLIST_FILE.exists():
+                        with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
+                            existing_urls = set(line.strip() for line in f if line.strip())
+
+                    new_items = 0
+                    # Dosyaya yeni linkleri "append" (ekle) modunda yaz
+                    with open(PLAYLIST_FILE, "a", encoding="utf-8") as f:
+                        for link in all_urls:
+                            # Logoları/resimleri atla
+                            if link.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp')):
+                                continue
+                            
+                            if link not in existing_urls:
+                                f.write(link + "\n")
+                                existing_urls.add(link)
+                                new_items += 1
                 
                 if new_items > 0:
-                    log(f"{new_items} yeni icerik eklendi. Bekleyen video sayisi: {len(video_queue)}")
+                    log(f"{new_items} yeni film/dizi 'zemtv_playlist.txt' dosyasina eklendi.")
         except Exception as e:
             log("M3U guncelleme hatasi: " + str(e))
         
@@ -351,43 +357,56 @@ def start_stream(video_url):
 
 
 # ============================================================
-# ANA DÖNGÜ
+# ANA DÖNGÜ (TXT DOSYASI ÜZERİNDEN OYNATMA)
 # ============================================================
 
 def main():
-    global video_queue, master_playlist
-    
-    print("\nZEM TV COCUK - Kesintisiz Film/Dizi Yayin Sistemi Baslatiliyor...\n")
+    print("\nZEM TV COCUK - TXT Tabanli Kesintisiz Yayin Sistemi Baslatiliyor...\n")
     check_files()
     download_logo()
     update_text_files()
 
     threading.Thread(target=text_update_loop, daemon=True).start()
-    threading.Thread(target=fetch_m3u_and_update_queue, daemon=True).start()
+    threading.Thread(target=fetch_m3u_and_update_playlist_file, daemon=True).start()
 
-    time.sleep(4)
+    # Arka plandaki işlemin ilk listeyi txt dosyasına yazması için bekleme süresi
+    time.sleep(5)
+
+    current_index = 0  # Dosyadaki kaçıncı satırı oynattığımızı takip eder
 
     while True:
         current_video = None
+        total_videos = 0
         
-        with queue_lock:
-            if len(video_queue) == 0 and len(master_playlist) > 0:
-                log("Kuyrukta yeni film kalmadi! Yayin kesilmesin diye mevcut liste tekrar siraya aliniyor...")
-                video_queue = master_playlist.copy()
-
-            if len(video_queue) > 0:
-                current_video = video_queue.pop(0)
+        with file_lock:
+            # zemtv_playlist.txt dosyasını oku
+            if PLAYLIST_FILE.exists():
+                with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
+                    # Boş olmayan tüm satırları listeye al
+                    lines = [line.strip() for line in f if line.strip()]
+                    total_videos = len(lines)
+                    
+                    if total_videos > 0:
+                        # Eğer dosyanın sonuna gelindiyse (yayının kesilmemesi için) en başa sar
+                        if current_index >= total_videos:
+                            log("Listenin sonuna gelindi. Yayin kesilmesin diye basa donuluyor...")
+                            current_index = 0
+                            
+                        current_video = lines[current_index]
 
         if current_video:
-            bekleyen = len(video_queue)
-            log(f"Oynatiliyor: {current_video} (Kuyrukta bekleyen: {bekleyen})")
+            log(f"Oynatiliyor (Sira {current_index + 1}/{total_videos}): {current_video}")
             
+            # Yayını başlat
             code = start_stream(current_video)
             
             log(f"Film Bitti. Siradaki icerige geciliyor...")
+            
+            # Film bitince sırayı bir sonraki satıra geçir
+            current_index += 1
             time.sleep(2) 
         else:
-            log("Liste tamamen bos. GitHub'dan icerik bekleniyor...")
+            log(f"Liste tamamen bos veya '{PLAYLIST_FILE.name}' henuz olusturulmadi. Bekleniyor...")
             time.sleep(10)
 
 if __name__ == "__main__":
