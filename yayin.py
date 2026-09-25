@@ -79,6 +79,31 @@ def write_file(path, text):
         log("Dosya yazma hatasi: " + str(e))
 
 # ============================================================
+# URL TEMİZLEME YARDIMCISI
+# ============================================================
+
+def clean_url(raw_url):
+    """
+    URL'nin sonuna yapışmış başlık/etiket kısımlarını temizler.
+    Örnek: 'http://x.com/a.m3u8?ID=1 | Akasya 1. Bölüm' -> 'http://x.com/a.m3u8?ID=1'
+    """
+    if not raw_url:
+        return raw_url
+    
+    url = raw_url.strip()
+    
+    # '|' karakterinden sonrasını at (URL içinde '|' olmaz)
+    if "|" in url:
+        url = url.split("|")[0].strip()
+    
+    # Boşluktan sonra gelen ve http ile başlamayan kısımları at
+    # (URL'de boşluk olmaz)
+    if " " in url:
+        url = url.split(" ")[0].strip()
+    
+    return url
+
+# ============================================================
 # M3U ÇEKME VE GÜNCELLEME DÖNGÜSÜ
 # ============================================================
 
@@ -99,7 +124,7 @@ def fetch_m3u_and_update_playlist_file():
                             for line in f:
                                 line = line.strip()
                                 if line and "|" in line:
-                                    existing_urls.add(line.split("|")[1].strip())
+                                    existing_urls.add(line.split("|", 1)[1].strip())
                                 elif line:
                                     existing_urls.add(line)
 
@@ -114,13 +139,20 @@ def fetch_m3u_and_update_playlist_file():
                                 if len(parts) > 1:
                                     current_title = parts[1].strip()
                             elif line.startswith("http"):
-                                lower_link = line.lower()
+                                # Satırda URL dışında ekstra bilgi varsa temizle
+                                cleaned = clean_url(line)
+                                lower_link = cleaned.lower()
+                                
                                 if any(ext in lower_link for ext in valid_extensions) or "workers.dev" in lower_link:
-                                    if line not in existing_urls:
-                                        f.write(f"{current_title}|{line}\n")
-                                        existing_urls.add(line)
+                                    if cleaned not in existing_urls:
+                                        # Başlıkta '|' varsa temizle (kendi ayracımızla karışmasın)
+                                        safe_title = current_title.replace("|", "-").strip()
+                                        if not safe_title:
+                                            safe_title = "Akasya Durağı"
+                                        f.write(f"{safe_title}|{cleaned}\n")
+                                        existing_urls.add(cleaned)
                                         new_items += 1
-                                current_title = "Akasya Durağı" # Sıfırla
+                                current_title = "Akasya Durağı"  # Sıfırla
                 
                 if new_items > 0:
                     log(f"{new_items} yeni gecerli video linki 'zemtv_playlist.txt' dosyasina eklendi.")
@@ -202,13 +234,14 @@ def create_filter():
 def build_command(video_url):
     filters = create_filter()
     
-    # Sadece vidrame linkleri için referer ekle, workers.dev gibi diğer linklerde boş bırak.
+    # URL'yi her ihtimale karşı tekrar temizle
+    video_url = clean_url(video_url)
+    
+    # Sadece vidrame linkleri için referer ekle
     headers = []
     if "vidrame" in video_url.lower():
         headers = ["-headers", "Referer: https://vidrame.pro/\r\n"]
     
-    # Uzantı kısıtlaması KALDIRILDI. FFmpeg kendi probe mekanizmasıyla
-    # M3U8 / MP4 / TS / MKV vb. formatları otomatik algılar.
     command = [
         FFMPEG,
         "-hide_banner", "-loglevel", "info",
@@ -283,6 +316,24 @@ def main():
     check_files()
     download_logo()
 
+    # Eski bozuk playlist'i temizle (URL'lerinde boşluk/başlık olan varsa)
+    if PLAYLIST_FILE.exists():
+        try:
+            with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
+                old_lines = [l.strip() for l in f if l.strip()]
+            fixed_lines = []
+            for l in old_lines:
+                if "|" in l:
+                    t, u = l.split("|", 1)
+                    fixed_lines.append(f"{t.strip()}|{clean_url(u)}")
+                else:
+                    fixed_lines.append(clean_url(l))
+            with open(PLAYLIST_FILE, "w", encoding="utf-8", newline="\n") as f:
+                f.write("\n".join(fixed_lines) + "\n")
+            log("Mevcut playlist dosyasi temizlendi.")
+        except Exception as e:
+            log("Playlist temizleme hatasi: " + str(e))
+
     # Arka planda M3U güncelleme döngüsünü başlat
     threading.Thread(target=fetch_m3u_and_update_playlist_file, daemon=True).start()
 
@@ -306,12 +357,12 @@ def main():
                             log("Listenin sonuna gelindi. Yayin kesilmesin diye basa donuluyor...")
                             current_index = 0
                             
-                        # Dosya formatı İsim|URL şeklinde olduğu için parse ediyoruz
                         line_data = lines[current_index]
                         if "|" in line_data:
                             current_video_title, current_video_url = line_data.split("|", 1)
+                            current_video_url = clean_url(current_video_url)
                         else:
-                            current_video_url = line_data
+                            current_video_url = clean_url(line_data)
 
         if current_video_url:
             if "vidrame.pro" in current_video_url and "master.m3u8" in current_video_url:
