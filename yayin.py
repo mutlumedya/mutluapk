@@ -31,7 +31,7 @@ import requests
 # YAYIN VE GITHUB AYARLARI
 # ============================================================
 
-GITHUB_M3U_URL = "https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/a087969df4b3eb542808fe6144fb3e8ffee28ae6/nuvio_parcalari/nuvio_u.m3u"
+GITHUB_M3U_URL = "https://raw.githubusercontent.com/kimbumuratyavuz/capcanli/refs/heads/main/sonfilmler.m3u"
 
 RTMP_URL = (
     "rtmp://ssh101.bozztv.com:1935/ssh101/zemtv"
