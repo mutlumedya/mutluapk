@@ -13,11 +13,11 @@ import time
 # ============================================================
 
 # BURAYA TEKLİ M3U8 YAYIN LİNKİNİ GİRİN
-SINGLE_M3U8_URL = "https://playlist.fasttvcdn.com/pl/rfrk9821hdy9dayo8wfyha/cizgi-film-tv/playlist/0.m3u8"
+SINGLE_M3U8_URL = "https://playlist.fasttvcdn.com/pl/rfrk9821hdy9dayo8wfyha/dizi-tv/playlist/0.m3u8"
 
-RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101/zemtvcocuk"
+RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101/fluxtv"
 
-LOGO_URL = "https://i.hizliresim.com/7pcmsgos.png"
+LOGO_URL = "https://i.hizliresim.com/2m4pmeki.png"
 
 FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"
 FONT = r"C:\Windows\Fonts\arial.ttf"
