@@ -20,15 +20,27 @@ def install_and_import(package):
         print(f"Eksik kutuphane tespit edildi: {package}. Otomatik olarak indiriliyor...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", package])
 
+install_and_import("feedparser")
 install_and_import("requests")
+
+import feedparser
 import requests
 
+
 # ============================================================
-# YAYIN AYARLARI
+# YAYIN VE GITHUB AYARLARI
 # ============================================================
 
-RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101/fluxakasya"
-LOGO_URL = "https://i.hizliresim.com/2m4pmeki.png"
+# YENI EKLENEN CALISAN M3U LINKI
+GITHUB_M3U_URL = "https://raw.githubusercontent.com/mooncrown04/m3ubirlestir/980311b240bc4d8244c77f67ee6fb4046851a15d/nuvio_parcalari/nuvio_t.m3u"
+
+RTMP_URL = (
+    "rtmp://ssh101.bozztv.com:1935/ssh101/zemtv"
+)
+
+LOGO_URL = (
+    "https://i.hizliresim.com/7pcmsgos.png"
+)
 
 FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"
 FONT = r"C:\Windows\Fonts\arial.ttf"
@@ -36,11 +48,13 @@ FONT = r"C:\Windows\Fonts\arial.ttf"
 BASE_DIR = Path(__file__).resolve().parent
 
 LOGO_FILE = BASE_DIR / "zemtv_logo.png"
-TITLE_FILE = BASE_DIR / "current_title.txt"
+INFO_FILE = BASE_DIR / "zemtv_info.txt"
+TICKER_FILE = BASE_DIR / "zemtv_ticker.txt"
 
-# FİLMLERİN OKUNACAĞI TXT DOSYASI
+# FİLMLERİN KAYDEDİLECEĞİ VE OKUNACAĞI TXT DOSYASI
 PLAYLIST_FILE = BASE_DIR / "zemtv_playlist.txt"
 file_lock = threading.Lock()
+
 
 # ============================================================
 # VIDEO AYARLARI
@@ -54,6 +68,7 @@ VIDEO_BITRATE = "3000k"
 MAXRATE = "3500k"
 BUFSIZE = "6000k"
 AUDIO_BITRATE = "128k"
+
 
 # ============================================================
 # LOG & DOSYA İŞLEMLERİ
@@ -77,37 +92,109 @@ def write_file(path, text):
             pass
         log("Dosya yazma hatasi: " + str(e))
 
+
 # ============================================================
-# SATIR AYIKLAMA
-# Format: URL|İsim
-# Örnek: https://x.com/a.m3u8?ID=1|Akasya Durağı 1. Bölüm
+# İNTERNETTEN CANLI HABER VE ALTIN/GÜMÜŞ ÇEKME
 # ============================================================
 
-def parse_line(raw_line):
-    """
-    Satırı (url, title) olarak döndürür.
-    Format: URL|İsim
-    '|' yoksa title None olur.
-    """
-    if not raw_line:
-        return None, None
-    line = raw_line.strip()
-    if not line:
-        return None, None
+def fetch_live_news_and_market():
+    headlines = []
+    rss_urls = [
+        "https://www.trthaber.com/sondakika.rss",
+        "https://www.cnnturk.com/feed/rss/news",
+        "https://www.ntv.com.tr/son-dakika.rss",
+        "https://www.haberturk.com/rss/manset.xml",
+        "https://www.sabah.com.tr/rss/sondakika.xml"
+    ]
+    for url in rss_urls:
+        try:
+            feed = feedparser.parse(url)
+            for entry in feed.entries[:4]:
+                title = entry.title.strip()
+                if title and title not in headlines:
+                    headlines.append(title)
+        except Exception as e:
+            log(f"RSS haber cekme hatasi ({url}): {e}")
+
+    if not headlines:
+        headlines = [
+            "ZEM TV Çocuk kuşağı en sevilen çizgi filmlerle kesintisiz yayında.",
+            "Türkiye'nin dijital ekranında eğlence ve eğitim dolu saatler devam ediyor.",
+            "Minikler için yepyeni maceralar ve eğitici içerikler ekranlarda."
+        ]
+
+    gold_price = "6.710,00 TL"
+    silver_price = "100,00 TL"
+    try:
+        res = requests.get("https://api.genelpara.com/embed/altin.json", timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            if "GA" in data:
+                gold_price = data["GA"].get("satis", "6.710,00 TL") + " TL"
+            if "AG" in data:
+                silver_price = data["AG"].get("satis", "100,00 TL") + " TL"
+    except:
+        pass
+
+    news_text = "   ***   ".join([f"{i+1}. {h}" for i, h in enumerate(headlines)])
+    market_text = f"   |||   CANLI PİYASA -> Gram Altın: {gold_price}   |   Gram Gümüş: {silver_price}   |||   "
+    return news_text + market_text
+
+
+# ============================================================
+# YAZILARI VE PLAYLIST DOSYASINI GÜNCELLEME DÖNGÜLERİ
+# ============================================================
+
+def update_text_files():
+    now = datetime.now()
+    date = now.strftime("%d.%m.%Y")
+    info = "ZEM TV COCUK | CANLI YAYIN | " + date
+    ticker = fetch_live_news_and_market()
+    write_file(INFO_FILE, info)
+    write_file(TICKER_FILE, ticker)
+
+def text_update_loop():
+    while True:
+        try:
+            update_text_files()
+        except Exception as e:
+            log("Metin guncelleme hatasi: " + str(e))
+        time.sleep(300)
+
+def fetch_m3u_and_update_playlist_file():
+    valid_extensions = ['.m3u8', '.mp4', '.mkv', '.ts', '.avi', '.txt']
     
-    if "|" in line:
-        parts = line.split("|", 1)
-        url = parts[0].strip()
-        title = parts[1].strip() if len(parts) > 1 else None
-    else:
-        url = line
-        title = None
-    
-    # URL'nin geçerli olduğundan emin ol
-    if not url.lower().startswith("http"):
-        return None, None
-    
-    return url, title
+    while True:
+        try:
+            log("GitHub M3U listesi kontrol ediliyor...")
+            res = requests.get(GITHUB_M3U_URL, timeout=10)
+            if res.status_code == 200:
+                all_urls = re.findall(r'(https?://[^\s"\'<>]+)', res.text)
+                
+                with file_lock:
+                    existing_urls = set()
+                    if PLAYLIST_FILE.exists():
+                        with open(PLAYLIST_FILE, "r", encoding="utf-8") as f:
+                            existing_urls = set(line.strip() for line in f if line.strip())
+
+                    new_items = 0
+                    with open(PLAYLIST_FILE, "a", encoding="utf-8") as f:
+                        for link in all_urls:
+                            lower_link = link.lower()
+                            
+                            if any(ext in lower_link for ext in valid_extensions):
+                                if link not in existing_urls:
+                                    f.write(link + "\n")
+                                    existing_urls.add(link)
+                                    new_items += 1
+                
+                if new_items > 0:
+                    log(f"{new_items} yeni gecerli video linki 'zemtv_playlist.txt' dosyasina eklendi.")
+        except Exception as e:
+            log("M3U guncelleme hatasi: " + str(e))
+        
+        time.sleep(900)
+
 
 # ============================================================
 # LOGO İNDİR
@@ -123,7 +210,9 @@ def download_logo():
             pass
     log("Logo indiriliyor...")
     try:
-        request = urllib.request.Request(LOGO_URL, headers={"User-Agent": "Mozilla/5.0"})
+        request = urllib.request.Request(
+            LOGO_URL, headers={"User-Agent": "Mozilla/5.0"}
+        )
         with urllib.request.urlopen(request, timeout=30) as response:
             data = response.read()
         if len(data) < 1000:
@@ -139,6 +228,7 @@ def ff_path(path):
     value = str(path)
     return value.replace("\\", "/").replace(":", "\\:")
 
+
 # ============================================================
 # FFMPEG FİLTRE
 # ============================================================
@@ -146,34 +236,55 @@ def ff_path(path):
 def create_filter():
     font = ff_path(FONT)
     logo = ff_path(LOGO_FILE)
-    title_f = ff_path(TITLE_FILE)
+    ticker = ff_path(TICKER_FILE)
 
     filter_text = (
         "[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2[base];"
         "[1:v]scale=250:-1[logo];"
         "[base][logo]overlay=W-w-20:20[v1];"
-        
-        # Akasya Duragi Kutulari
-        "[v1]drawbox=x=0:y=670:w=150:h=50:color=0x003366@1.0:t=fill[v_box1];"
-        "[v_box1]drawbox=x=150:y=670:w=100:h=50:color=0x374151@1.0:t=fill[v_box2];"
-        
-        # Akasya Yazisi
+        "[v1]drawbox=x=0:y=670:w=1280:h=50:color=0x111827@0.94:t=fill[v_bg];"
+        "[v_bg]drawtext="
+        f"fontfile='{font}':"
+        f"textfile='{ticker}':"
+        "reload=1:"
+        "fontcolor=white:"
+        "fontsize=20:"
+        "borderw=1:"
+        "bordercolor=black:"
+        "x='1280 - mod(t*85\\, 20000)':"
+        "y=683[v_ticker];"
+        "[v_ticker]drawbox=x=0:y=670:w=130:h=50:color=0x003366@1.0:t=fill[v_box1];"
+        "[v_box1]drawbox=x=130:y=670:w=100:h=50:color=0x374151@1.0:t=fill[v_box2];"
         "[v_box2]drawtext="
-        f"fontfile='{font}':text='Akasya':fontcolor=yellow:fontsize=18:x=40:y=673:borderw=1:bordercolor=black[v_t1];"
-        
-        # Durağı Yazisi
+        f"fontfile='{font}':"
+        "text='ZEM':"
+        "fontcolor=yellow:"
+        "fontsize=18:"
+        "x=45:"
+        "y=673:"
+        "borderw=1:"
+        "bordercolor=black[v_t1];"
         "[v_t1]drawtext="
-        f"fontfile='{font}':text='Durağı':fontcolor=yellow:fontsize=18:x=43:y=693:borderw=1:bordercolor=black[v_t2];"
-        
-        # Saat Yazisi
+        f"fontfile='{font}':"
+        "text='HABER':"
+        "fontcolor=yellow:"
+        "fontsize=18:"
+        "x=32:"
+        "y=693:"
+        "borderw=1:"
+        "bordercolor=black[v_t2];"
         "[v_t2]drawtext="
-        f"fontfile='{font}':text='%{{localtime\\:%H\\\\\\:%M}}':fontcolor=white:fontsize=22:x=165:y=683:borderw=2:bordercolor=black[v_t3];"
-        
-        # Sag Alt Köşede Video İsmi
-        "[v_t3]drawtext="
-        f"fontfile='{font}':textfile='{title_f}':reload=1:fontcolor=white:fontsize=24:x=W-tw-20:y=H-th-20:box=1:boxcolor=0x111827@0.8:boxborderw=8[vout]"
+        f"fontfile='{font}':"
+        "text='%{localtime\\:%H\\\\\\:%M}':"
+        "fontcolor=white:"
+        "fontsize=22:"
+        "x=142:"
+        "y=683:"
+        "borderw=2:"
+        "bordercolor=black[vout]"
     )
     return filter_text
+
 
 # ============================================================
 # FFMPEG KOMUTU
@@ -182,9 +293,14 @@ def create_filter():
 def build_command(video_url):
     filters = create_filter()
     
-    headers = []
-    if "vidrame" in video_url.lower():
-        headers = ["-headers", "Referer: https://vidrame.pro/\r\n"]
+    if ".txt" in video_url.lower() or ".m3u8" in video_url.lower():
+        format_args = [
+            "-allowed_extensions", 
+            "jpg,jpeg,png,txt,ts,m3u8,mp4,mkv,avi,m4s,m4v,mpg,mpeg,mpegts,mov,ogg,vob,wav", 
+            "-f", "hls"
+        ]
+    else:
+        format_args = []
     
     command = [
         FFMPEG,
@@ -195,8 +311,9 @@ def build_command(video_url):
         "-reconnect", "1", "-reconnect_streamed", "1",
         "-reconnect_at_eof", "1", "-reconnect_delay_max", "10",
         "-rw_timeout", "20000000",
-        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36"
-    ] + headers + [
+        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+        "-headers", "Referer: https://vidrame.pro/\r\n"
+    ] + format_args + [
         "-i", video_url,
         "-loop", "1", "-i", str(LOGO_FILE),
         "-filter_complex", filters,
@@ -211,6 +328,7 @@ def build_command(video_url):
     ]
     return command
 
+
 def check_files():
     if not os.path.isfile(FFMPEG):
         print(f"\nFFmpeg bulunamadi:\n{FFMPEG}\n")
@@ -219,9 +337,7 @@ def check_files():
         print(f"\nArial bulunamadi:\n{FONT}\n")
         sys.exit(1)
 
-def start_stream(video_url, video_title):
-    write_file(TITLE_FILE, video_title)
-    
+def start_stream(video_url):
     command = build_command(video_url)
     log("FFmpeg baslatiliyor.")
     process = None
@@ -250,37 +366,26 @@ def start_stream(video_url, video_title):
         log("FFmpeg calistirma hatasi: " + str(e))
         return -1
 
+
 # ============================================================
-# ANA DÖNGÜ
+# ANA DÖNGÜ (TXT DOSYASI ÜZERİNDEN OYNATMA)
 # ============================================================
 
 def main():
-    print("\nAkasya TV - TXT Tabanli Kesintisiz Yayin Sistemi Baslatiliyor...\n")
+    print("\nZEM TV COCUK - TXT Tabanli Kesintisiz Yayin Sistemi Baslatiliyor...\n")
     check_files()
     download_logo()
+    update_text_files()
 
-    # Playlist dosyası yoksa boş oluştur
-    if not PLAYLIST_FILE.exists():
-        try:
-            with open(PLAYLIST_FILE, "w", encoding="utf-8", newline="\n") as f:
-                f.write("")
-            log(f"'{PLAYLIST_FILE.name}' dosyasi bulunamadi, bos olarak olusturuldu.")
-            log(f"Yol: {PLAYLIST_FILE}")
-        except Exception as e:
-            log(f"'{PLAYLIST_FILE.name}' olusturulamadi: {e}")
-            sys.exit(1)
-    else:
-        log(f"'{PLAYLIST_FILE.name}' bulundu: {PLAYLIST_FILE}")
+    threading.Thread(target=text_update_loop, daemon=True).start()
+    threading.Thread(target=fetch_m3u_and_update_playlist_file, daemon=True).start()
 
-    log("Format: URL|İsim  (ornek: https://x.com/a.m3u8?ID=1|Akasya Durağı 1. Bölüm)")
-
-    time.sleep(2)
+    time.sleep(5)
 
     current_index = 0
 
     while True:
-        current_video_url = None
-        current_video_title = "Akasya Durağı"
+        current_video = None
         total_videos = 0
         
         with file_lock:
@@ -294,28 +399,22 @@ def main():
                             log("Listenin sonuna gelindi. Yayin kesilmesin diye basa donuluyor...")
                             current_index = 0
                             
-                        line_data = lines[current_index]
-                        url, title = parse_line(line_data)
-                        current_video_url = url
-                        if title:
-                            current_video_title = title
-                        else:
-                            current_video_title = "Akasya Durağı"
+                        current_video = lines[current_index]
 
-        if current_video_url:
-            if "vidrame.pro" in current_video_url and "master.m3u8" in current_video_url:
-                current_video_url = current_video_url.replace("master.m3u8", "1080.txt")
+        if current_video:
+            if "vidrame.pro" in current_video and "master.m3u8" in current_video:
+                current_video = current_video.replace("master.m3u8", "1080.txt")
                 
-            log(f"Oynatiliyor (Sira {current_index + 1}/{total_videos}): [{current_video_title}] -> {current_video_url}")
+            log(f"Oynatiliyor (Sira {current_index + 1}/{total_videos}): {current_video}")
             
-            code = start_stream(current_video_url, current_video_title)
+            code = start_stream(current_video)
             
             log(f"Film Bitti. Siradaki icerige geciliyor...")
             
             current_index += 1
             time.sleep(2) 
         else:
-            log(f"Liste bos. '{PLAYLIST_FILE}' dosyasina video linki ekleyin. Bekleniyor...")
+            log(f"Liste tamamen bos veya '{PLAYLIST_FILE.name}' henuz olusturulmadi. Bekleniyor...")
             time.sleep(10)
 
 if __name__ == "__main__":
