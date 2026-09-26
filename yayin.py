@@ -13,11 +13,11 @@ import time
 # ============================================================
 
 # BURAYA TEKLİ M3U8 YAYIN LİNKİNİ GİRİN
-SINGLE_M3U8_URL = "https://playlist.fasttvcdn.com/pl/rfrk9821hdy9dayo8wfyha/dizi-tv/playlist/0.m3u8"
+SINGLE_M3U8_URL = "https://playlist.fasttvcdn.com/pl/rfrk9821hdy9dayo8wfyha/asr-i-saadet-tv/playlist/0.m3u8"
 
-RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101/fluxtv"
+RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101/zemtvdini"
 
-LOGO_URL = "https://i.hizliresim.com/2m4pmeki.png"
+LOGO_URL = "https://i.hizliresim.com/3pwjh3py.png"
 
 FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"
 FONT = r"C:\Windows\Fonts\arial.ttf"
@@ -90,7 +90,7 @@ def create_filter():
     # Haber bandı ve kutular kaldırıldı, sol üste Telegram adresi, sol alta saat eklendi
     filter_text = (
         "[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2[base];"
-        "[1:v]scale=250:-1[logo];"
+        "[1:v]scale=200:-1[logo];"
         "[base][logo]overlay=W-w-20:20[v1];"
         "[v1]drawtext="
         f"fontfile='{font}':"
