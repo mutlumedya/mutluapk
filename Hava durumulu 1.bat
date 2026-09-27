@@ -13,11 +13,6 @@ cd /d "C:\xampp\htdocs\ZemTv\live"
 set "PLAYLIST=C:\xampp\htdocs\ZemTv\playlist.txt"
 set "LOGO=C:\xampp\htdocs\ZemTv\logo\logo.png"
 
-:: Hava durumu dosyasi yoksa bos olarak olustur (FFmpeg hata vermesin)
-if not exist "C:\xampp\htdocs\ZemTv\live\havadurumu.txt" (
-    echo Hava durumu yukleniyor... > "C:\xampp\htdocs\ZemTv\live\havadurumu.txt"
-)
-
 :: Arka planda hava durumunu guncelleyen donguyu baslatir
 start /b cmd /c "%~f0" weather
 
@@ -64,8 +59,8 @@ goto MAIN
 :: ARKA PLAN OTOMATIK HAVA DURUMU DONGUSU (6 Saatte Bir Gercek Veri Ceker)
 :: =========================================================================
 :WEATHER_LOOP
-:: 81 il (Turkce karakter kullanmadan)
-set "CITIES=Adana Adiyaman Afyonkarahisar Agri Aksaray Amasya Ankara Antalya Ardahan Artvin Aydin Balikesir Bartin Batman Bayburt Bilecik Bingol Bitlis Bolu Burdur Bursa Canakkale Cankiri Corum Denizli Diyarbakir Duzce Edirne Elazig Erzincan Erzurum Eskisehir Gaziantep Giresun Gumushane Hakkari Hatay Igdir Isparta Istanbul Izmir Kahramanmaras Karabuk Karaman Kars Kastamonu Kayseri Kirikkale Kirklareli Kirsehir Kilis Kocaeli Konya Kutahya Malatya Manisa Mardin Mersin Mugla Mus Nevsehir Nigde Ordu Osmaniye Rize Sakarya Samsun Sanliurfa Siirt Sinop Sivas Sirnak Tekirdag Tokat Trabzon Tunceli Usak Van Yalova Yozgat Zonguldak"
+:: Istedigin sehirleri aralarinda SADECE BOSLUK birakarak asagiya yaz (Turkce karakter kullanmadan):
+set "CITIES=Istanbul Ankara Izmir Bursa Antalya Adana Diyarbakir Trabzon Erzurum Konya"
 
 :FETCH_WEATHER
 :: 1. ADIM: Internete baglanip guncel sicaklik ve emojileri cek, gecici dosyalara kaydet (Gunde sadece 4 kez calisir)
@@ -74,9 +69,9 @@ for %%C in (%CITIES%) do (
 )
 
 :: 2. ADIM: Indirilen bu verileri ekranda sirayla 5 saniyede bir dondur
-:: Her sehir 5 saniye gosterilir. 81 sehir * 5 saniye = 405 saniye (1 tur)
-:: 6 saat = 21600 saniye. 21600 / 405 = 53.3 tur. 53 tur yeterli.
-for /L %%I in (1,1,53) do (
+:: Dongunun 6 saat (21600 saniye) surmesi gerektiginden 4320 kere donmesi yeterli. 
+:: (5 saniye gosterim * ornegin 10 sehir = 50 saniyelik 1 tur. 6 saat / 50 saniye = yaklasik 432 tur. Biz 432 yazalim.)
+for /L %%I in (1,1,432) do (
     for %%C in (%CITIES%) do (
         if exist "C:\xampp\htdocs\ZemTv\live\w_%%C.tmp" (
             <nul set /p="%%C: " > "C:\xampp\htdocs\ZemTv\live\havadurumu.txt"
