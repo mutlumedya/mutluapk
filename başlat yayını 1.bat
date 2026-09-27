@@ -4,11 +4,13 @@ setlocal EnableDelayedExpansion
 
 title ZemTv_Streamer
 
+:: Klasore giris
 cd /d "C:\xampp\htdocs\ZemTv\live"
 
 set "PLAYLIST=C:\xampp\htdocs\ZemTv\playlist.txt"
 set "LOGO=C:\xampp\htdocs\ZemTv\logo\logo.png"
 
+:: Eski dosyalari temizle
 if exist index.m3u8 del /q index.m3u8
 
 :MAIN
@@ -45,4 +47,5 @@ for /f "usebackq tokens=1,2 delims=|" %%A in ("%PLAYLIST%") do (
     timeout /t 3 >nul
 )
 
+:: Liste bittiginde basa don
 goto MAIN
