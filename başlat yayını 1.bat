@@ -4,6 +4,38 @@ setlocal EnableDelayedExpansion
 
 title ZemTv_Streamer
 
+:: ==========================================
+:: STREAMLINK OTOMATIK KONTROL VE KURULUM
+:: ==========================================
+streamlink --version >nul 2>&1
+if %errorlevel% neq 0 (
+    cls
+    echo ========================================================
+    echo SİSTEMDE STREAMLINK BULUNAMADI!
+    echo OTOMATİK OLARAK İNDİRİLİP KURULUYOR, LÜTFEN BEKLEYİN...
+    echo ========================================================
+    
+    :: GitHub uzerinden en son surumu bulup indirir
+    powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/streamlink/windows-builds/releases/latest'; $asset = $release.assets | Where-Object { $_.name -match '\.exe$' } | Select-Object -First 1; Write-Host 'En guncel surum indiriliyor...'; Invoke-WebRequest -Uri $asset.browser_download_url -OutFile 'streamlink_setup.exe'"
+    
+    echo.
+    echo Dosya indirildi. Kurulum yapiliyor, bu islem 1-2 dakika surebilir...
+    start /wait streamlink_setup.exe /S
+    
+    :: Kurulum bitince setup dosyasini temizle
+    del streamlink_setup.exe
+    
+    cls
+    echo ========================================================
+    echo STREAMLINK KURULUMU BASARIYLA TAMAMLANDI!
+    echo Sistemin yeni komutu algilayabilmesi icin bu pencereyi kapatin.
+    echo Ardindan bu BAT dosyasina CIFT TIKLAYARAK YENIDEN BASLATIN.
+    echo ========================================================
+    pause
+    exit
+)
+:: ==========================================
+
 cd /d "C:\xampp\htdocs\ZemTv\live"
 
 set "PLAYLIST=C:\xampp\htdocs\ZemTv\playlist.txt"
@@ -47,7 +79,7 @@ for /f "usebackq tokens=1,2 delims=|" %%A in ("%PLAYLIST%") do (
     -hls_list_size 10 ^
     -hls_flags delete_segments+independent_segments ^
     -hls_segment_filename "seg_%%03d.ts" ^
-    -hls_base_url "http://45.158.14.16/ZemTv/live/" ^
+    -hls_base_url "http://104.238.23.196/ZemTv/live/" ^
     index.m3u8
 
     echo.
