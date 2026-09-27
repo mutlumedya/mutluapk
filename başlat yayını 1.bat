@@ -34,12 +34,11 @@ for /f "usebackq tokens=1,2 delims=|" %%A in ("%PLAYLIST%") do (
 
     echo Haberler guncellendi. FFmpeg baslatiliyor...
 
-    :: Streamlink kaldirildi, video dogrudan FFmpeg'e veriliyor.
-    :: Dosyalari asiri hizli isleyip yayini bozmamasi icin en basa -re komutu eklendi.
+    :: Cift sesli filmlerde oynaticinin cokmemesi icin ses haritasi "-map 0:a:0" olarak duzeltildi.
     ffmpeg -re -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 -i "!SRC!" ^
     -i "%LOGO%" ^
     -filter_complex "[0:v]scale=1280:720,setsar=1[main];[1:v]scale=240:-2,format=rgba[logo];[main][logo]overlay=40:40[v1];[v1]drawbox=x=0:y=670:w=1280:h=50:color=0x111827@0.90:t=fill[v2];[v2]drawtext=fontfile='%FONT_PATH%':textfile='%TICKER_FILE%':reload=1:fontcolor=white:fontsize=24:x='1280-mod(t*85\,20000)':y=680:borderw=1:bordercolor=black[v_final]" ^
-    -map "[v_final]" -map 0:a? ^
+    -map "[v_final]" -map 0:a:0 ^
     -c:v libx264 -preset ultrafast -tune zerolatency -crf 23 ^
     -c:a aac -b:a 128k -ac 2 -ar 44100 ^
     -f hls ^
