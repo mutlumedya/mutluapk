@@ -13,6 +13,11 @@ cd /d "C:\xampp\htdocs\ZemTv\live"
 set "PLAYLIST=C:\xampp\htdocs\ZemTv\playlist.txt"
 set "LOGO=C:\xampp\htdocs\ZemTv\logo\logo.png"
 
+:: Hava durumu dosyasi yoksa bos olarak olustur (FFmpeg hata vermesin)
+if not exist "C:\xampp\htdocs\ZemTv\live\havadurumu.txt" (
+    echo Hava durumu yukleniyor... > "C:\xampp\htdocs\ZemTv\live\havadurumu.txt"
+)
+
 :: Arka planda hava durumunu guncelleyen donguyu baslatir
 start /b cmd /c "%~f0" weather
 
