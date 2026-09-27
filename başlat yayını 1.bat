@@ -9,13 +9,7 @@ cd /d "C:\xampp\htdocs\ZemTv\live"
 set "PLAYLIST=C:\xampp\htdocs\ZemTv\playlist.txt"
 set "LOGO=C:\xampp\htdocs\ZemTv\logo\logo.png"
 
-:: Yollar eski calisan haline geri getirildi
-set "FONT_PATH=C\:/Windows/Fonts/arial.ttf"
-set "TICKER_FILE=C\:/xampp/htdocs/ZemTv/haber.txt"
-set "HABER_DOSYASI=C:\xampp\htdocs\ZemTv\haber.txt"
-
 if exist index.m3u8 del /q index.m3u8
-if exist seg_*.ts del /q seg_*.ts
 
 :MAIN
 for /f "usebackq tokens=1,2 delims=|" %%A in ("%PLAYLIST%") do (
@@ -29,28 +23,25 @@ for /f "usebackq tokens=1,2 delims=|" %%A in ("%PLAYLIST%") do (
     echo KAYNAK: !SRC!
     echo ========================================
 
-    echo Guncel haberler cekiliyor...
-    powershell -NoProfile -Command "$rss = Invoke-RestMethod -Uri 'https://www.trthaber.com/sondakika.rss' -ErrorAction SilentlyContinue; if ($rss) { $headlines = ($rss | Select-Object -ExpandProperty title | Select-Object -First 5) -join '   ***   '; $output = '   ***   ' + $headlines + '   ***   '; [System.IO.File]::WriteAllText('%HABER_DOSYASI%', $output) } else { [System.IO.File]::WriteAllText('%HABER_DOSYASI%', '   ***   Haberler alinamadi...   ***   ') }"
-
-    echo Haberler guncellendi. FFmpeg baslatiliyor...
-
-    :: Katman sirasi degistirildi. Ilk yazi (v3) cizilir, ustune Mavi Kutu (v4), onun ustune ZEM ve HABER (v5, v_final).
-    ffmpeg -re -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 -i "!SRC!" ^
+    ffmpeg -loglevel warning -re -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 ^
+    -i "!SRC!" ^
     -i "%LOGO%" ^
-    -filter_complex "[0:v]scale=1280:720,setsar=1[main];[1:v]scale=240:-2,format=rgba[logo];[main][logo]overlay=40:40[v1];[v1]drawbox=x=0:y=670:w=1280:h=50:color=0x111827@0.94:t=fill[v2];[v2]drawtext=fontfile='%FONT_PATH%':textfile='%TICKER_FILE%':reload=1:fontcolor=white:fontsize=24:x='1280-mod(t*85\,20000)':y=680:borderw=1:bordercolor=black[v3];[v3]drawbox=x=0:y=670:w=130:h=50:color=0x003366@1.0:t=fill[v4];[v4]drawtext=fontfile='%FONT_PATH%':text='ZEM':fontcolor=yellow:fontsize=18:x=45:y=673:borderw=1:bordercolor=black[v5];[v5]drawtext=fontfile='%FONT_PATH%':text='HABER':fontcolor=yellow:fontsize=18:x=32:y=693:borderw=1:bordercolor=black[v_final]" ^
-    -map "[v_final]" -map 0:a:0 ^
-    -c:v libx264 -preset ultrafast -tune zerolatency -crf 23 ^
-    -c:a aac -b:a 128k -ac 2 -ar 44100 ^
+    -filter_complex "[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[main];[1:v]scale=180:-2,format=rgba[logo];[main][logo]overlay=20:20,drawtext=text='!NAME!':x=w-tw-20:y=h-th-20:fontsize=17:fontcolor=white@0.85:box=1:boxcolor=black@0.30:boxborderw=5:fontfile=arial.ttf,drawtext=text='%%{localtime\:%%H\\:%%M\\:%%S}':x=20:y=h-th-20:fontsize=17:fontcolor=white@0.85:box=1:boxcolor=black@0.30:boxborderw=5:fontfile=arial.ttf[v_final]" ^
+    -map "[v_final]" -map 0:a? ^
+    -c:v libx264 -preset ultrafast -tune zerolatency -crf 22 ^
+    -g 60 -keyint_min 60 -sc_threshold 0 ^
+    -threads 2 ^
+    -c:a aac -b:a 128k -ac 2 ^
     -f hls ^
     -hls_time 4 ^
-    -hls_list_size 10 ^
-    -hls_flags delete_segments+independent_segments ^
+    -hls_list_size 6 ^
+    -hls_flags delete_segments+independent_segments+append_list ^
     -hls_segment_filename "seg_%%03d.ts" ^
     -hls_base_url "http://45.158.14.16/ZemTv/live/" ^
     index.m3u8
 
     echo.
-    echo Yayin bitti veya hata alindi. 3 saniye sonra siradaki isleme geciliyor...
+    echo Parca bitti. 3 saniye sonra siradakine geciliyor...
     timeout /t 3 >nul
 )
 
