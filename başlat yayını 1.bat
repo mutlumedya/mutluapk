@@ -28,7 +28,7 @@ for /f "usebackq tokens=1,2 delims=|" %%A in ("%PLAYLIST%") do (
     ffmpeg -loglevel warning -re -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 5 ^
     -i "!SRC!" ^
     -i "%LOGO%" ^
-    -filter_complex "[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[main];[1:v]scale=180:-2,format=rgba[logo];[main][logo]overlay=20:20,drawtext=text='!NAME!':x=w-tw-20:y=h-th-20:fontsize=17:fontcolor=white@0.85:box=1:boxcolor=black@0.30:boxborderw=5:fontfile=arial.ttf,drawtext=text='%%{localtime\:%%H\\:%%M\\:%%S}':x=20:y=h-th-20:fontsize=17:fontcolor=white@0.85:box=1:boxcolor=black@0.30:boxborderw=5:fontfile=arial.ttf[v_final]" ^
+    -filter_complex "[0:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[main];[1:v]scale=180:-2,format=rgba[logo];[main][logo]overlay=20:20,drawtext=text='!NAME!':x=w-tw-20:y=h-th-20:fontsize=17:fontcolor=white@0.85:box=1:boxcolor=black@0.30:boxborderw=5:fontfile=arial.ttf,drawtext=text='%%{localtime\:%%H.%%M.%%S}':x=20:y=h-th-20:fontsize=17:fontcolor=white@0.85:box=1:boxcolor=black@0.30:boxborderw=5:fontfile=arial.ttf[v_final]" ^
     -map "[v_final]" -map 0:a? ^
     -c:v libx264 -preset ultrafast -tune zerolatency -crf 22 ^
     -g 60 -keyint_min 60 -sc_threshold 0 ^
