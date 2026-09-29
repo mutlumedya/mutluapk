@@ -1,191 +1,117 @@
 <?php
-/**
- * CatCast.tv Stream Resolver + Proxy
- * Kullanım: /catcast.php?id=KANALADI.m3u8
- * Örnek:    /catcast.php?id=mutlutv.m3u8
- */
-
-// Hata ayıklama (canlıda kapat: 0 yap)
-ini_set('display_errors', 1);
-error_reporting(E_ALL);
-
-// CORS
+// CORS başlıklarını ekle
 header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET, HEAD, OPTIONS');
-header('Access-Control-Allow-Headers: *');
+header('Access-Control-Allow-Methods: GET, HEAD, POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type');
 
+// OPTIONS isteği için erken yanıt
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
 }
 
-// -------------------- YARDIMCI FONKSİYON --------------------
-function http_get($url, $extraHeaders = []) {
-    $ch = curl_init();
-    $headers = array_merge([
-        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept: application/json, text/plain, */*',
-        'Accept-Language: tr-TR,tr;q=0.9,en;q=0.8',
-        'Referer: https://catcast.tv/',
-        'Origin: https://catcast.tv',
-    ], $extraHeaders);
-
-    curl_setopt_array($ch, [
-        CURLOPT_URL            => $url,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_MAXREDIRS      => 5,
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_SSL_VERIFYHOST => false,
-        CURLOPT_TIMEOUT        => 20,
-        CURLOPT_CONNECTTIMEOUT => 10,
-        CURLOPT_HTTPHEADER     => $headers,
-        CURLOPT_ENCODING       => '',
-    ]);
-
-    $body = curl_exec($ch);
-    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $err  = curl_error($ch);
-    curl_close($ch);
-
-    return ['code' => $code, 'body' => $body, 'error' => $err];
-}
-
-// -------------------- PARAMETRE KONTROLÜ --------------------
-if (empty($_GET['id'])) {
+// ID parametresini kontrol et
+if (!isset($_GET['id']) || empty($_GET['id'])) {
     http_response_code(400);
-    header('Content-Type: text/plain; charset=utf-8');
-    echo "Hata: 'id' parametresi gerekli.\nKullanım: ?id=mutlutv.m3u8";
+    echo 'ID parameter is required. Usage: ?id=AlvinOvcu.m3u8';
     exit();
 }
 
-$cleanId = preg_replace('/\.m3u8$/i', '', trim($_GET['id']));
-$cleanId = preg_replace('/[^a-zA-Z0-9_\-\.]/', '', $cleanId); // güvenlik
+// .m3u8 uzantısını temizleme
+$cleanId = preg_replace('/\.m3u8$/', '', $_GET['id']);
 
-// -------------------- 1. ADIM: KANAL BİLGİSİ --------------------
-$channelUrl = "https://api.catcast.tv/api/channels/getbyshortname/" . urlencode($cleanId);
-$r1 = http_get($channelUrl);
-
-if ($r1['error']) {
-    http_response_code(500);
-    header('Content-Type: text/plain; charset=utf-8');
-    echo "Adım 1 cURL hatası: " . $r1['error'] . "\nURL: $channelUrl";
-    exit();
-}
-
-if ($r1['code'] !== 200) {
-    http_response_code(500);
-    header('Content-Type: text/plain; charset=utf-8');
-    echo "Adım 1 başarısız. HTTP: {$r1['code']}\nURL: $channelUrl\nCevap:\n" . substr($r1['body'], 0, 500);
-    exit();
-}
-
-$channelData = json_decode($r1['body'], true);
-if (!is_array($channelData)) {
-    http_response_code(500);
-    header('Content-Type: text/plain; charset=utf-8');
-    echo "Adım 1 JSON çözümlenemedi.\nCevap:\n" . substr($r1['body'], 0, 500);
-    exit();
-}
-
-// ID'yi birden fazla olası yerden ara
-$entityId = $channelData['id']
-         ?? $channelData['data']['id']
-         ?? $channelData['data']['channel']['id']
-         ?? $channelData['channel']['id']
-         ?? null;
-
-if (!$entityId) {
-    http_response_code(500);
-    header('Content-Type: text/plain; charset=utf-8');
-    echo "Adım 1: Kanal ID bulunamadı.\nGelen JSON:\n" . json_encode($channelData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-    exit();
-}
-
-// -------------------- 2. ADIM: GÜNCEL PROGRAM --------------------
-$programUrl = "https://api.catcast.tv/api/channels/" . urlencode($entityId) . "/getcurrentprogram";
-$r2 = http_get($programUrl);
-
-if ($r2['error']) {
-    http_response_code(500);
-    header('Content-Type: text/plain; charset=utf-8');
-    echo "Adım 2 cURL hatası: " . $r2['error'] . "\nURL: $programUrl";
-    exit();
-}
-
-if ($r2['code'] !== 200) {
-    http_response_code(500);
-    header('Content-Type: text/plain; charset=utf-8');
-    echo "Adım 2 başarısız. HTTP: {$r2['code']}\nURL: $programUrl\nCevap:\n" . substr($r2['body'], 0, 500);
-    exit();
-}
-
-$programData = json_decode($r2['body'], true);
-if (!is_array($programData)) {
-    http_response_code(500);
-    header('Content-Type: text/plain; charset=utf-8');
-    echo "Adım 2 JSON çözümlenemedi.\nCevap:\n" . substr($r2['body'], 0, 500);
-    exit();
-}
-
-// Yayın URL'sini birden fazla olası alandan ara
-$streamUrl = $programData['data']['full_mobile_url']
-          ?? $programData['data']['full_url']
-          ?? $programData['data']['hls_url']
-          ?? $programData['data']['stream_url']
-          ?? $programData['full_mobile_url']
-          ?? null;
-
-if (!$streamUrl) {
-    http_response_code(500);
-    header('Content-Type: text/plain; charset=utf-8');
-    echo "Adım 2: Yayın URL'si bulunamadı.\nGelen JSON:\n" . json_encode($programData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-    exit();
-}
-
-// -------------------- 3. ADIM: M3U8 PROXY --------------------
-// Yayın URL'si .m3u8 ise proxy'le, değilse direkt yönlendir
-if (stripos($streamUrl, '.m3u8') !== false) {
-    $r3 = http_get($streamUrl, [
-        'Accept: application/vnd.apple.mpegurl, application/x-mpegURL, */*',
+try {
+    // 1. Adım: Kanal bilgilerini getir
+    $channelUrl = "https://api.catcast.tv/api/channels/getbyshortname/" . urlencode($cleanId);
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $channelUrl);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept: application/json',
+        'Referer: https://catcast.tv/'
     ]);
-
-    if ($r3['error'] || $r3['code'] !== 200) {
-        // Proxy başarısız olursa direkt yönlendir
-        header("Location: " . $streamUrl, true, 302);
-        exit();
+    
+    $channelResponse = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    if ($httpCode !== 200) {
+        throw new Exception("First API failed with status: " . $httpCode);
     }
-
-    // M3U8 içeriğini al
-    $m3u8 = $r3['body'];
-
-    // Segment ve alt-playlist URL'lerini proxy üzerinden geçir
-    $baseUrl = preg_replace('#/[^/]*$#', '/', $streamUrl);
-
-    $lines = explode("\n", $m3u8);
-    $out = [];
-    foreach ($lines as $line) {
-        $trim = trim($line);
-        if ($trim === '' || $trim[0] === '#') {
-            // URI="..." içeren etiketleri de düzelt
-            if (preg_match('/URI="([^"]+)"/', $trim, $m)) {
-                $abs = (strpos($m[1], 'http') === 0) ? $m[1] : $baseUrl . $m[1];
-                $proxied = 'proxy.php?u=' . urlencode($abs);
-                $trim = str_replace($m[1], $proxied, $trim);
-            }
-            $out[] = $trim;
-        } else {
-            $abs = (strpos($trim, 'http') === 0) ? $trim : $baseUrl . $trim;
-            $out[] = 'proxy.php?u=' . urlencode($abs);
-        }
+    
+    $channelData = json_decode($channelResponse, true);
+    
+    if ($channelData === null) {
+        throw new Exception("Failed to parse channel API response");
     }
-
-    header('Content-Type: application/vnd.apple.mpegurl');
+    
+    // API yanıt yapısına göre entity_id'yi bulma
+    $entityId = null;
+    
+    // Kök seviyedeki id'yi kullan
+    if (isset($channelData['id'])) {
+        $entityId = $channelData['id'];
+    } 
+    // data objesi içindeki id'yi kullan
+    else if (isset($channelData['data']['id'])) {
+        $entityId = $channelData['data']['id'];
+    }
+    else {
+        throw new Exception('ID not found in API response');
+    }
+    
+    error_log("Found entity ID: " . $entityId);
+    
+    // 2. Adım: Program bilgilerini getir
+    $programUrl = "https://api.catcast.tv/api/channels/" . urlencode($entityId) . "/getcurrentprogram";
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $programUrl);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept: application/json',
+        'Referer: https://catcast.tv/'
+    ]);
+    
+    $programResponse = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    if ($httpCode !== 200) {
+        throw new Exception("Second API failed with status: " . $httpCode);
+    }
+    
+    $programData = json_decode($programResponse, true);
+    
+    if ($programData === null) {
+        throw new Exception("Failed to parse program API response");
+    }
+    
+    // full_mobile_url kontrolü
+    if (!isset($programData['data']['full_mobile_url'])) {
+        throw new Exception('Stream URL (full_mobile_url) not found in program data');
+    }
+    
+    $streamUrl = $programData['data']['full_mobile_url'];
+    error_log("Found stream URL: " . $streamUrl);
+    
+    // 3. Adım: Nihai URL'ye yönlendir
+    header("Location: " . $streamUrl, true, 302);
+    exit();
+    
+} catch (Exception $error) {
+    error_log("PHP Error: " . $error->getMessage());
+    http_response_code(500);
+    header('Content-Type: text/plain');
     header('Access-Control-Allow-Origin: *');
-    echo implode("\n", $out);
+    echo "Error: " . $error->getMessage();
     exit();
 }
-
-// M3U8 değilse direkt yönlendir
-header("Location: " . $streamUrl, true, 302);
-exit();
+?>
