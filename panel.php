@@ -2,11 +2,12 @@
 session_start();
 
 // GÜVENLİK ŞİFRENİZ
-$panel_sifresi = "mutlu";
+$panel_sifresi = "ZemTv2024!";
 
-// DOSYA YOLLARI
-$playlist_yolu = "C:\\xampp\\htdocs\\ZemTv\\playlist.txt";
-$bat_yolu = "C:\\xampp\\htdocs\\ZemTv\\baslat.bat";
+// DOSYA YOLLARI (Kendi sisteminize göre kontrol edin)
+$ana_dizin = "C:\\xampp\\htdocs\\ZemTv";
+$playlist_yolu = $ana_dizin . "\\playlist.txt";
+$bat_yolu = $ana_dizin . "\\baslat.bat";
 
 // --- OTURUM KONTROLÜ ---
 if (isset($_POST['sifre_giris'])) {
@@ -22,35 +23,27 @@ if (isset($_GET['cikis'])) {
     exit;
 }
 if (!isset($_SESSION['oturum_acik']) || $_SESSION['oturum_acik'] !== true) {
-    echo '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><title>ZemTv Panel</title><style>body { font-family: Arial; text-align: center; margin-top: 100px; background:#f4f4f9; }</style></head><body><h2>ZemTv Yayın Paneli</h2>';
-    if(isset($hata)) echo "<p style='color:red;'>$hata</p>";
-    echo '<form method="POST"><input type="password" name="sifre" required placeholder="Panel Şifresi" style="padding:10px;"> <button type="submit" name="sifre_giris" style="padding:10px;">Giriş</button></form></body></html>';
+    echo '<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><title>ZemTv Panel Giriş</title><style>body { font-family: Arial; text-align: center; margin-top: 100px; background:#1e1e1e; color: #fff; }</style></head><body><h2>ZemTv Yayın Paneli</h2>';
+    if(isset($hata)) echo "<p style='color:#e74c3c;'>$hata</p>";
+    echo '<form method="POST"><input type="password" name="sifre" required placeholder="Panel Şifresi" style="padding:10px; border-radius:5px; border:none;"> <button type="submit" name="sifre_giris" style="padding:10px; border-radius:5px; background:#3498db; color:#fff; border:none; cursor:pointer;">Giriş</button></form></body></html>';
     exit;
 }
 
-// --- KAYDET VE YENİDEN BAŞLAT İŞLEMİ ---
+// --- YAYIN KONTROL İŞLEMLERİ ---
+
+// 1. Ayarları Kaydet
 if (isset($_POST['ayarlari_kaydet'])) {
-    
-    // 1. Playlist'i Kaydet
     $yeni_playlist = $_POST['playlist_icerik'];
-    file_put_contents($playlist_yolu, str_replace("\r\n", "\n", $yeni_playlist)); // Satır boşluklarını düzeltir
+    file_put_contents($playlist_yolu, str_replace("\r\n", "\n", $yeni_playlist));
 
-    // 2. Logo Pozisyonuna Göre Overlay Kodunu Belirle
     $secilen_pozisyon = $_POST['logo_pozisyonu'];
-    
-    if ($secilen_pozisyon == "sag_ust") {
-        $overlay_kodu = "main_w-overlay_w-50:40";
-    } elseif ($secilen_pozisyon == "sol_ust") {
-        $overlay_kodu = "50:40";
-    } elseif ($secilen_pozisyon == "sag_alt") {
-        $overlay_kodu = "main_w-overlay_w-50:main_h-overlay_h-50";
-    } elseif ($secilen_pozisyon == "sol_alt") {
-        $overlay_kodu = "50:main_h-overlay_h-50";
-    } else {
-        $overlay_kodu = "main_w-overlay_w-50:40"; // Varsayılan Sağ Üst
-    }
+    if ($secilen_pozisyon == "sag_ust") { $overlay_kodu = "main_w-overlay_w-50:40"; } 
+    elseif ($secilen_pozisyon == "sol_ust") { $overlay_kodu = "50:40"; } 
+    elseif ($secilen_pozisyon == "sag_alt") { $overlay_kodu = "main_w-overlay_w-50:main_h-overlay_h-50"; } 
+    elseif ($secilen_pozisyon == "sol_alt") { $overlay_kodu = "50:main_h-overlay_h-50"; } 
+    else { $overlay_kodu = "main_w-overlay_w-50:40"; }
 
-    // 3. Bat Dosyasını Yeniden Oluştur (PHP Değişkeni Sadece Overlay'e Eklenir)
+    // Bat dosyasını oluştur (Sizin verdiğiniz kod)
     $bat_icerik = <<<EOT
 @echo off
 chcp 65001 >nul
@@ -101,22 +94,38 @@ for /f "usebackq tokens=1,2 delims=|" %%A in ("%PLAYLIST%") do (
 goto MAIN
 EOT;
 
-    // Bat dosyasını kaydet
     file_put_contents($bat_yolu, $bat_icerik);
+    $mesaj = "Ayarlar kaydedildi! Değişikliklerin yansıması için yayını durdurup yeniden başlatın.";
+}
 
-    // 4. Eski Yayınları Kapat ve Yenisini Başlat
-    // Önceki bat penceresini ve ffmpeg/streamlink'i zorla kapatıyoruz.
-    exec("taskkill /FI \"WINDOWTITLE eq ZemTv_Streamer*\" /T /F 2>&1");
-    exec("taskkill /IM ffmpeg.exe /F 2>&1");
-    exec("taskkill /IM streamlink.exe /F 2>&1");
-    
-    // 2 saniye bekle (portların/dosyaların serbest kalması için)
-    sleep(2);
+// 2. Yayını Başlat
+if (isset($_POST['yayin_baslat'])) {
+    // "The system cannot find the file C:" hatasını önleyen güvenli başlatma kodu
+    $komut = 'start "ZemTv_Streamer" /D "' . $ana_dizin . '" "baslat.bat"';
+    pclose(popen($komut, "r"));
+    sleep(2); // Başlaması için 2 saniye bekle
+    header("Location: panel.php");
+    exit;
+}
 
-    // Yeni bat dosyasını arka planda yeni bir pencerede çalıştır
-    pclose(popen("start \"ZemTv_Streamer\" cmd.exe /c \"$bat_yolu\"", "r"));
+// 3. Yayını Durdur
+if (isset($_POST['yayin_durdur'])) {
+    exec("taskkill /FI \"WINDOWTITLE eq ZemTv_Streamer*\" /T /F 2>nul");
+    exec("taskkill /IM ffmpeg.exe /F 2>nul");
+    exec("taskkill /IM streamlink.exe /F 2>nul");
+    sleep(1);
+    header("Location: panel.php");
+    exit;
+}
 
-    $mesaj = "Ayarlar kaydedildi ve yayın yeni ayarlarla yeniden başlatıldı!";
+// --- YAYIN DURUMUNU KONTROL ET ---
+exec("tasklist /FI \"IMAGENAME eq ffmpeg.exe\" 2>nul", $task_ciktisi);
+$yayin_aktif = false;
+foreach ($task_ciktisi as $satir) {
+    if (stripos($satir, 'ffmpeg.exe') !== false) {
+        $yayin_aktif = true;
+        break;
+    }
 }
 
 // Dosyadan mevcut playlisti çek
@@ -127,31 +136,56 @@ $mevcut_playlist = file_exists($playlist_yolu) ? file_get_contents($playlist_yol
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title>ZemTv Yayın Paneli</title>
+    <title>ZemTv Kontrol Merkezi</title>
+    <!-- Video Oynatıcı için HLS.js kütüphanesi -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
-        body { font-family: Arial; background: #2c3e50; color: #ecf0f1; margin: 0; padding: 20px; }
-        .kutu { max-width: 800px; margin: auto; background: #34495e; padding: 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
-        h2 { margin-top: 0; border-bottom: 2px solid #7f8c8d; padding-bottom: 10px; }
-        label { font-weight: bold; margin-top: 15px; display: block; color: #f1c40f; }
-        textarea { width: 100%; height: 200px; background: #1a252f; color: #ecf0f1; border: 1px solid #7f8c8d; padding: 10px; margin-top: 5px; font-family: monospace; resize: vertical; box-sizing: border-box;}
-        select { width: 100%; padding: 10px; margin-top: 5px; background: #1a252f; color: #ecf0f1; border: 1px solid #7f8c8d; box-sizing: border-box;}
-        button { background: #e74c3c; color: white; border: none; padding: 15px; width: 100%; font-size: 18px; margin-top: 20px; cursor: pointer; font-weight: bold; border-radius: 5px; transition: 0.3s; }
-        button:hover { background: #c0392b; }
-        .cikis { float: right; background: #95a5a6; color: white; padding: 8px 15px; text-decoration: none; border-radius: 4px; font-size: 14px; }
-        .basari { background: #27ae60; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; text-align: center; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #121212; color: #ecf0f1; margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: auto; display: flex; flex-wrap: wrap; gap: 20px; }
+        .sol-panel { flex: 1; min-width: 300px; background: #1e1e1e; padding: 25px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        .sag-panel { flex: 1; min-width: 400px; background: #1e1e1e; padding: 25px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        h2 { margin-top: 0; border-bottom: 2px solid #333; padding-bottom: 10px; color: #fff; }
+        
+        /* Durum Badge'leri */
+        .durum { display: inline-block; padding: 8px 15px; border-radius: 20px; font-weight: bold; font-size: 14px; float: right; }
+        .aktif { background: #27ae60; color: #fff; box-shadow: 0 0 10px #27ae60; }
+        .kapali { background: #e74c3c; color: #fff; box-shadow: 0 0 10px #e74c3c; }
+
+        /* Form Elemanları */
+        label { font-weight: bold; margin-top: 15px; display: block; color: #3498db; }
+        textarea { width: 100%; height: 200px; background: #2c2c2c; color: #ecf0f1; border: 1px solid #444; padding: 10px; margin-top: 5px; font-family: monospace; resize: vertical; box-sizing: border-box; border-radius:5px;}
+        select { width: 100%; padding: 10px; margin-top: 5px; background: #2c2c2c; color: #ecf0f1; border: 1px solid #444; box-sizing: border-box; border-radius:5px;}
+        
+        /* Butonlar */
+        .btn { border: none; padding: 12px; font-size: 16px; cursor: pointer; font-weight: bold; border-radius: 5px; transition: 0.3s; width: 100%; margin-top: 10px;}
+        .btn-kaydet { background: #f39c12; color: #fff; margin-top: 20px; }
+        .btn-kaydet:hover { background: #d68910; }
+        .btn-baslat { background: #27ae60; color: #fff; }
+        .btn-baslat:hover { background: #219150; }
+        .btn-durdur { background: #e74c3c; color: #fff; }
+        .btn-durdur:hover { background: #c0392b; }
+        .cikis { text-decoration: none; color: #aaa; font-size: 14px; float:right; margin-top:-30px;}
+        .basari { background: #2980b9; color: white; padding: 15px; border-radius: 5px; margin-bottom: 20px; text-align: center; }
+
+        /* Video Oynatıcı */
+        .video-container { width: 100%; aspect-ratio: 16/9; background: #000; border: 2px solid #333; border-radius: 8px; overflow: hidden; margin-top: 15px; }
+        video { width: 100%; height: 100%; }
     </style>
 </head>
 <body>
 
-    <div class="kutu">
+<div class="container">
+    
+    <!-- SOL PANEL: AYARLAR -->
+    <div class="sol-panel">
         <a href="?cikis=1" class="cikis">Çıkış Yap</a>
-        <h2>ZemTv Yönetim Paneli</h2>
+        <h2>⚙️ Sistem Ayarları</h2>
 
         <?php if(isset($mesaj)) echo "<div class='basari'>$mesaj</div>"; ?>
 
         <form method="POST">
             <label>🎬 Playlist (Oynatılacak Listeler)</label>
-            <p style="font-size: 12px; color:#bdc3c7; margin-top:2px;">Format: <em>http://yayinlinki.m3u8|Film Adı</em> (Her satıra bir tane)</p>
+            <p style="font-size: 12px; color:#aaa; margin-top:2px;">Format: <em>http://link.m3u8|Film Adı</em></p>
             <textarea name="playlist_icerik"><?php echo htmlspecialchars($mevcut_playlist); ?></textarea>
 
             <label>🖼️ Logo Konumu (logo.png)</label>
@@ -162,10 +196,86 @@ $mevcut_playlist = file_exists($playlist_yolu) ? file_get_contents($playlist_yol
                 <option value="sol_alt">Sol Alt</option>
             </select>
 
-            <button type="submit" name="ayarlari_kaydet">Ayarları Kaydet ve Yayını Yenile</button>
-            <p style="font-size: 12px; color:#bdc3c7; text-align:center; margin-top:10px;">(Bu butona bastığınızda yayın anlık olarak kesilir ve yeni ayarlarla 3 saniye içinde tekrar başlar.)</p>
+            <button type="submit" name="ayarlari_kaydet" class="btn btn-kaydet">💾 Sadece Ayarları Kaydet</button>
         </form>
     </div>
+
+    <!-- SAĞ PANEL: KONTROL VE OYNATICI -->
+    <div class="sag-panel">
+        <h2>
+            📺 Canlı Yayın Kontrolü
+            <?php if($yayin_aktif): ?>
+                <span class="durum aktif">🔴 YAYIN AKTİF</span>
+            <?php else: ?>
+                <span class="durum kapali">⚫ YAYIN KAPALI</span>
+            <?php endif; ?>
+        </h2>
+
+        <form method="POST" style="display: flex; gap: 10px; margin-bottom: 20px;">
+            <button type="submit" name="yayin_baslat" class="btn btn-baslat">▶ YAYINI BAŞLAT</button>
+            <button type="submit" name="yayin_durdur" class="btn btn-durdur">⏹ YAYINI DURDUR</button>
+        </form>
+
+        <label>👀 Canlı Önizleme</label>
+        <div class="video-container">
+            <video id="zem_player" controls autoplay muted></video>
+        </div>
+        <p style="font-size: 12px; color:#aaa; text-align:center;">
+            (Yayın başladığında görüntü buraya 10-15 saniye gecikmeli düşebilir.)
+        </p>
+
+    </div>
+</div>
+
+<script>
+    // Canlı Yayın Oynatıcı Kurulumu (HLS.js)
+    document.addEventListener("DOMContentLoaded", () => {
+        const video = document.getElementById('zem_player');
+        
+        // Önbelleği önlemek için sonuna rastgele sayı ekliyoruz
+        const hlsUrl = 'live/index.m3u8?t=' + new Date().getTime(); 
+
+        // Eğer yayın aktifse (PHP'den gelen bilgi) Player'ı çalıştır
+        const yayinAktifMi = <?php echo $yayin_aktif ? 'true' : 'false'; ?>;
+
+        if (yayinAktifMi) {
+            if (Hls.isSupported()) {
+                const hls = new Hls({
+                    debug: false,
+                    manifestLoadingTimeOut: 20000,
+                });
+                hls.loadSource(hlsUrl);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    video.play();
+                });
+                
+                // Yayın koparsa kendini yenilemeye çalışması için
+                hls.on(Hls.Events.ERROR, function (event, data) {
+                    if (data.fatal) {
+                        switch (data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                console.log("Yayın koptu, yeniden bağlanılıyor...");
+                                hls.startLoad();
+                                break;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                hls.recoverMediaError();
+                                break;
+                            default:
+                                hls.destroy();
+                                break;
+                        }
+                    }
+                });
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = hlsUrl;
+                video.addEventListener('loadedmetadata', function() {
+                    video.play();
+                });
+            }
+        }
+    });
+</script>
 
 </body>
 </html>
