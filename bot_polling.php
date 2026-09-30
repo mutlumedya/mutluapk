@@ -2,12 +2,7 @@
 /**
  * MKClub - Final Premium Refer & Earn Bot (Long Polling - HTTPS GEREKMEZ)
  * Türkçe + IBAN versiyonu
- *
- * KURULUM:
- * 1. Bu dosyayı /m3u/bot_polling.php olarak kaydet
- * 2. data/ klasörünü sil (eski config kalmasın)
- * 3. Tarayıcıdan 1 kez aç: http://45.158.14.16/m3u/bot_polling.php
- * 4. Telegram'da bota /start yaz
+ * ZORUNLU KANAL KONTROLÜ DEVRE DIŞI
  */
 
 date_default_timezone_set('Europe/Istanbul');
@@ -148,7 +143,7 @@ function get_user($uid) {
             'balance' => 0.0,
             'ref_count' => 0,
             'withdrawn' => 0.0,
-            'is_invited' => false,
+            'is_invited' => true,
             'last_bonus' => 0,
             'pending_action' => null,
             'created_at' => date('c')
@@ -167,17 +162,10 @@ function save_user($user) {
     write_json($USERS_FILE, $users);
 }
 
-// ------------------ CHANNEL CHECK ------------------
+// ------------------ KANAL KONTROLÜ (DEVRE DIŞI) ------------------
+// Zorunlu kanal katılımı tamamen kaldırıldı.
+// Bu fonksiyon her zaman true döner, yani kullanıcı "katılmış" sayılır.
 function user_in_all_channels($user_id) {
-    $conf = read_json($GLOBALS['CONFIG_FILE']);
-    $channels = $conf['channels'] ?? [];
-    if (empty($channels)) return true;
-    foreach ($channels as $ch) {
-        $res = api_call('getChatMember', ['chat_id' => $ch, 'user_id' => $user_id]);
-        if (!isset($res['ok']) || !$res['ok']) return false;
-        $status = $res['result']['status'] ?? 'left';
-        if (in_array($status, ['left','kicked'])) return false;
-    }
     return true;
 }
 
@@ -208,16 +196,9 @@ function back_home_button() {
     return json_encode(['inline_keyboard'=> [[['text'=>'⬅️ Ana Menüye Dön','callback_data'=>'/home']]]]);
 }
 
+// Katıl butonu artık kullanılmıyor ama fonksiyon kalsın (hata vermesin)
 function join_markup() {
-    $conf = read_json($GLOBALS['CONFIG_FILE']);
-    $rows = [];
-    $row = [];
-    foreach ($conf['channels'] as $ch) {
-        $row[] = ['text'=>"Ziyaret et {$ch}", 'url'=>'https://t.me/'.ltrim($ch,'@')];
-    }
-    if ($row) $rows[] = $row;
-    $rows[] = [['text'=>'✅ Katıldım','callback_data'=>'I_JOINED']];
-    return json_encode(['inline_keyboard'=>$rows]);
+    return main_menu_markup();
 }
 
 // ------------------ BONUS ------------------
@@ -245,15 +226,12 @@ function show_home($chat_id, $user_id) {
     $conf = read_json($GLOBALS['CONFIG_FILE']);
     $reward = number_format($conf['ref_reward'] ?? $GLOBALS['DEFAULT_REF_REWARD'], 2);
     $bonus = number_format($conf['daily_bonus'] ?? $GLOBALS['DEFAULT_DAILY_BONUS'], 2);
-    $channels_block = "";
-    foreach ($conf['channels'] as $c) $channels_block .= "• {$c}\n";
     $payout = htmlspecialchars($conf['payout_channel'] ?? $GLOBALS['DEFAULT_PAYOUT']);
 
     $home = "<b>🎉 MKClub'a Hoş Geldiniz — Referans & Kazan</b>\n\n";
     $home .= "Arkadaşlarınızı referans linkinizle davet edin ve her referans için <b>₺{$reward}</b> kazanın!\n\n";
     $home .= "<b>💰 Referans ödülü:</b> <b>₺{$reward}</b>\n";
     $home .= "<b>🎁 Günlük bonus:</b> <b>₺{$bonus}</b>\n\n";
-    $home .= "<b>📢 Gerekli kanal(lar):</b>\n{$channels_block}\n";
     $home .= "<b>🏦 Ödeme kanalı:</b> {$payout}\n\n";
     $home .= "<b>👤 Bakiyeniz</b>\n\n";
     $home .= "💰 <b>₺".number_format($u['balance'],2)."</b>\n\n";
@@ -319,16 +297,8 @@ function handle_callback($callback) {
     }
 
     if ($data === 'I_JOINED') {
-        if (user_in_all_channels($user_id)) {
-            $uu = get_user($user_id);
-            $uu['is_invited'] = true;
-            save_user($uu);
-            answer_callback($cbid, "Doğrulandı");
-            send_message($chat_id, "<b>✅ Doğrulandı — gerekli kanallara katıldınız.</b>\nAşağıdaki menüyü kullanın.", ['reply_markup' => main_menu_markup()]);
-        } else {
-            answer_callback($cbid, "Katılmadınız");
-            send_message($chat_id, "<b>❗ Henüz tüm gerekli kanallara katılmadınız.</b>\nLütfen tüm gerekli kanallara katılın ve tekrar ✅ Katıldım butonuna basın.", ['reply_markup' => join_markup()]);
-        }
+        answer_callback($cbid, "Doğrulandı");
+        send_message($chat_id, "<b>✅ Doğrulandı!</b>\nAşağıdaki menüyü kullanın.", ['reply_markup' => main_menu_markup()]);
         return;
     }
 
@@ -346,12 +316,6 @@ function process_message($message) {
     log_line("MSG from {$user_id}: {$text}");
 
     $u = get_user($user_id);
-    $joined = user_in_all_channels($user_id);
-
-    if (!$joined && stripos($text, '/start') !== 0 && stripos($text, '/help') !== 0 && stripos($text, '/cmd') !== 0) {
-        send_message($chat_id, "<b>🔒 Erişim Kısıtlı</b>\n\nBotu kullanmadan önce gerekli kanal(lar)a katılmalısınız.", ['reply_markup' => join_markup()]);
-        return;
-    }
 
     // ---------- /start ----------
     if (stripos($text, '/start') === 0) {
@@ -367,18 +331,13 @@ function process_message($message) {
             send_message($ref, "<b>🎉 Referans Bonusu!</b>\nYeni bir kullanıcı davet ettiğiniz için <b>₺".number_format($reward,2)."</b> kazandınız.");
         }
 
-        if (!user_in_all_channels($user_id)) {
-            send_message($chat_id, "<b>🔒 Devam etmek için kanal(lar)ımıza katılın</b>\nKatılın ve ✅ Katıldım butonuna basın.", ['reply_markup' => join_markup()]);
-            return;
-        } else {
-            if (!$u['is_invited']) {
-                $u['is_invited'] = true;
-                save_user($u);
-                $username = isset($from['username']) ? ('@'.$from['username']) : 'KullanıcıAdıYok';
-                $adminNotify = "<b>👤 Yeni Kullanıcı MKClub'a Katıldı</b>\n\nİsim: <code>".htmlspecialchars($from['first_name'] ?? 'Kullanıcı')."</code>\nKullanıcı ID: <code>{$user_id}</code>\nKullanıcı Adı: <code>{$username}</code>\nReferans: ".($ref ? "<code>{$ref}</code>" : "—")."\nZaman: ".date('Y-m-d H:i:s')." (TSİ)";
-                $conf = read_json($GLOBALS['CONFIG_FILE']);
-                foreach ($conf['admins'] as $adm) send_message($adm, $adminNotify);
-            }
+        if (!$u['is_invited']) {
+            $u['is_invited'] = true;
+            save_user($u);
+            $username = isset($from['username']) ? ('@'.$from['username']) : 'KullanıcıAdıYok';
+            $adminNotify = "<b>👤 Yeni Kullanıcı MKClub'a Katıldı</b>\n\nİsim: <code>".htmlspecialchars($from['first_name'] ?? 'Kullanıcı')."</code>\nKullanıcı ID: <code>{$user_id}</code>\nKullanıcı Adı: <code>{$username}</code>\nReferans: ".($ref ? "<code>{$ref}</code>" : "—")."\nZaman: ".date('Y-m-d H:i:s')." (TSİ)";
+            $conf = read_json($GLOBALS['CONFIG_FILE']);
+            foreach ($conf['admins'] as $adm) send_message($adm, $adminNotify);
         }
         show_home($chat_id, $user_id);
         return;
@@ -401,9 +360,6 @@ function process_message($message) {
         $cmds .= "/setref — Referans ödülü\n";
         $cmds .= "/setbonus — Günlük bonus\n";
         $cmds .= "/setpayout — Ödeme kanalı\n";
-        $cmds .= "/addchannel — Kanal ekle\n";
-        $cmds .= "/delchannel — Kanal kaldır\n";
-        $cmds .= "/listchannels — Kanalları göster\n";
         $cmds .= "/addadmin — Admin ekle\n";
         $cmds .= "/deladmin — Admin kaldır\n";
         $cmds .= "/listadmins — Adminleri göster\n";
@@ -524,9 +480,6 @@ function process_message($message) {
         $panel .= "/setref <miktar> — Referans ödülü\n";
         $panel .= "/setbonus <miktar> — Günlük bonus\n";
         $panel .= "/setpayout <@kanal> — Ödeme kanalı\n";
-        $panel .= "/addchannel <@kanal> — Kanal ekle\n";
-        $panel .= "/delchannel <@kanal> — Kanal kaldır\n";
-        $panel .= "/listchannels — Kanalları göster\n";
         $panel .= "/addadmin <id> — Admin ekle\n";
         $panel .= "/deladmin <id> — Admin kaldır\n";
         $panel .= "/listadmins — Adminleri göster\n";
@@ -568,38 +521,6 @@ function process_message($message) {
         $conf['payout_channel'] = trim($parts[1]);
         write_json($GLOBALS['CONFIG_FILE'], $conf);
         send_message($chat_id, "<b>✅ Ödeme kanalı: {$parts[1]}</b>", ['reply_markup' => back_home_button()]);
-        return;
-    }
-
-    if (stripos($text, '/addchannel') === 0) {
-        if (!is_admin($user_id)) { send_message($chat_id, "🚫 Admin"); return; }
-        $parts = preg_split('/\s+/', $text, 2);
-        if (!isset($parts[1])) { send_message($chat_id, "Kullanım: /addchannel @kanal"); return; }
-        $conf = read_json($GLOBALS['CONFIG_FILE']);
-        $conf['channels'][] = trim($parts[1]);
-        $conf['channels'] = array_values(array_unique($conf['channels']));
-        write_json($GLOBALS['CONFIG_FILE'], $conf);
-        send_message($chat_id, "<b>✅ Kanal eklendi: {$parts[1]}</b>", ['reply_markup' => back_home_button()]);
-        return;
-    }
-
-    if (stripos($text, '/delchannel') === 0) {
-        if (!is_admin($user_id)) { send_message($chat_id, "🚫 Admin"); return; }
-        $parts = preg_split('/\s+/', $text, 2);
-        if (!isset($parts[1])) { send_message($chat_id, "Kullanım: /delchannel @kanal"); return; }
-        $conf = read_json($GLOBALS['CONFIG_FILE']);
-        $conf['channels'] = array_values(array_diff($conf['channels'], [trim($parts[1])]));
-        write_json($GLOBALS['CONFIG_FILE'], $conf);
-        send_message($chat_id, "<b>✅ Kanal kaldırıldı.</b>", ['reply_markup' => back_home_button()]);
-        return;
-    }
-
-    if (stripos($text, '/listchannels') === 0) {
-        if (!is_admin($user_id)) { send_message($chat_id, "🚫 Admin"); return; }
-        $conf = read_json($GLOBALS['CONFIG_FILE']);
-        $s = "<b>📢 Gerekli Kanallar</b>\n\n";
-        foreach ($conf['channels'] as $c) $s .= "• ".htmlspecialchars($c)."\n";
-        send_message($chat_id, $s, ['reply_markup' => back_home_button()]);
         return;
     }
 
@@ -685,15 +606,14 @@ function process_message($message) {
 }
 
 // ================== POLLING DÖNGÜSÜ ==================
-// Önce eski webhook'u sil
 api_call('deleteWebhook', ['drop_pending_updates' => false]);
 
-log_line("=== POLLING BAŞLADI (Yeni Token) ===");
+log_line("=== POLLING BAŞLADI (Kanal kontrolü devre dışı) ===");
 
 if (php_sapi_name() !== 'cli') {
     header('Content-Type: text/plain; charset=utf-8');
     echo "MKClub Bot - Long Polling Aktif\n";
-    echo "Yeni Token ile çalışıyor\n";
+    echo "Zorunlu kanal kontrolü DEVRE DIŞI\n";
     echo "Bot çalışıyor... (Bu sayfayı kapatma)\n\n";
     flush();
 }
