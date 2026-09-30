@@ -2,7 +2,7 @@
 session_start();
 
 // --- GÜVENLİK ŞİFRENİZ ---
-$panel_sifresi = "ZemTv2024!";
+$panel_sifresi = "mutlu";
 
 // --- DOSYA YOLLARI ---
 $ana_dizin = "C:\\xampp\\htdocs\\ZemTv";
