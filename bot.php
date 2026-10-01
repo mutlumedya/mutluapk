@@ -6,7 +6,6 @@ function hashCode($str) {
     $len = strlen($str);
     for ($i = 0; $i < $len; $i++) {
         $hash = (($hash << 5) - $hash) + ord($str[$i]);
-        // JS'deki "hash |= 0" (32-bit işaretli tam sayıya indirgeme)
         $hash &= 0xFFFFFFFF;
         if ($hash >= 0x80000000) $hash -= 0x100000000;
     }
@@ -14,7 +13,7 @@ function hashCode($str) {
 }
 
 function buildChunklistUrl($channel) {
-    $timeSlot = intdiv(time(), 300); // 5 dakikalık periyot
+    $timeSlot = intdiv(time(), 300);
     $tRand = (abs(hashCode($channel['stream'] . $timeSlot)) % 900000000) + 100000000;
     $basePath = isset($channel['customPath']) ? $channel['customPath'] : 'live';
     return "https://{$channel['domain']}/{$basePath}/{$channel['stream']}/chunklist_w{$tRand}.m3u8?hash=9520d7940ddaf87a835f52f01f2206be";
@@ -34,7 +33,7 @@ function httpGet($url, $headers) {
     ]);
     $body = curl_exec($ch);
     curl_close($ch);
-    return $body; // hata olursa false
+    return $body;
 }
 
 function redirectTo($url) {
@@ -42,10 +41,22 @@ function redirectTo($url) {
     exit;
 }
 
-// --- Yol çözümleme ---
+// --- Yol çözümleme (DÜZELTİLDİ) ---
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?: '/';
-$rawPath = trim(mb_strtolower(ltrim($path, '/'), 'UTF-8'));
-$channelPath = preg_replace('/\s+/', '-', rawurldecode($rawPath));
+
+// bot.php gibi script adını bul
+$scriptName = basename($_SERVER['SCRIPT_NAME']); // bot.php
+$pos = strpos($path, $scriptName);
+
+if ($pos !== false) {
+    // Script adından sonraki kısmı al (ör. /aztv)
+    $channelPath = substr($path, $pos + strlen($scriptName));
+} else {
+    $channelPath = $path;
+}
+
+$channelPath = trim(mb_strtolower(ltrim($channelPath, '/'), 'UTF-8'));
+$channelPath = preg_replace('/\s+/', '-', rawurldecode($channelPath));
 
 if ($channelPath === '' || $channelPath === 'index.php') {
     http_response_code(400);
@@ -92,13 +103,11 @@ try {
         'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     ];
 
-    // 1. Online onay tetikleyicisi
     if ($channel['id'] !== "9999") {
         $onlineTriggerUrl = "https://canlitv.com/online/online.php?sayfa={$channel['id']}&tur=1&ref=0&onay=1";
         @httpGet($onlineTriggerUrl, $browserHeaders);
     }
 
-    // 2. Player sayfasından güncel m3u8 adresini yakala
     $playerUrl = "https://canlitv.com/player/index.php?id={$channel['id']}&mobile=1";
     $playerHtml = httpGet($playerUrl, $browserHeaders);
     if ($playerHtml === false) {
@@ -113,7 +122,6 @@ try {
         $m3u8Match = $m[0];
     }
 
-    // 3. Nihai adres
     if ($m3u8Match !== null) {
         if (strpos($m3u8Match, 'playlist.m3u8') !== false) {
             $finalStreamUrl = buildChunklistUrl($channel);
@@ -124,7 +132,6 @@ try {
         $finalStreamUrl = buildChunklistUrl($channel);
     }
 
-    // 4. Doğrudan yönlendirme (oynatıcı akışı kendi IP'siyle alır)
     redirectTo($finalStreamUrl);
 
 } catch (Throwable $e) {
