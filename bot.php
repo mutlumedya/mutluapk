@@ -1,6 +1,6 @@
 <?php
 // ======================================================
-// PHP - M3U8 Proxy (AES-256-GCM Şifreli) - Query String
+// PHP - M3U8 Live Proxy (AES-256-GCM) - Stream İsimli
 // ======================================================
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
@@ -34,8 +34,7 @@ function encryptData($dataObject) {
     $ciphertext = openssl_encrypt($plaintext, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
     if ($ciphertext === false) return '';
     $combined = $iv . $ciphertext . $tag;
-    $base64 = base64_encode($combined);
-    return rtrim(strtr($base64, '+/', '-_'), '=');
+    return rtrim(strtr(base64_encode($combined), '+/', '-_'), '=');
 }
 
 // ------------------------------------------------------
@@ -56,35 +55,29 @@ function decryptData($cipherText) {
 }
 
 // ------------------------------------------------------
-// M3U Listesi
+// M3U Listesini Oku
 // ------------------------------------------------------
 function getChannels() {
     if (file_exists(CACHE_FILE) && (time() - filemtime(CACHE_FILE) < CACHE_TTL)) {
         $cached = json_decode(file_get_contents(CACHE_FILE), true);
         if ($cached && count($cached) > 0) return $cached;
     }
-
-    $ctx = stream_context_create([
-        'http' => [
-            'header' => "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n",
-            'timeout' => 15
-        ]
-    ]);
+    $ctx = stream_context_create(['http' => [
+        'header' => "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n",
+        'timeout' => 15
+    ]]);
     $content = @file_get_contents(M3U_URL, false, $ctx);
     if ($content === false) {
         if (file_exists(CACHE_FILE)) return json_decode(file_get_contents(CACHE_FILE), true) ?: [];
         throw new Exception('Liste yüklenemedi');
     }
-
     $lines = preg_split('/\r?\n/', $content);
     $channels = [];
     $current = ['extinf' => '', 'name' => '', 'headers' => [], 'url' => ''];
     $expectingUrl = false;
-
     foreach ($lines as $line) {
         $line = trim($line);
         if ($line === '') continue;
-
         if (strpos($line, '#EXTINF') === 0) {
             if (!empty($current['url'])) $channels[] = $current;
             $name = '';
@@ -107,7 +100,6 @@ function getChannels() {
         }
     }
     if (!empty($current['url'])) $channels[] = $current;
-
     $channels = array_values(array_filter($channels, fn($c) => !empty($c['url'])));
     if (count($channels) === 0) throw new Exception('Hiç kanal bulunamadı');
     @file_put_contents(CACHE_FILE, json_encode($channels, JSON_UNESCAPED_UNICODE));
@@ -118,6 +110,7 @@ function getChannels() {
 // M3U8 içeriğini yeniden yaz
 // ------------------------------------------------------
 function rewriteM3u8Content($content, $baseStreamUrl, $baseProxyUrl, $headersObj) {
+    $content = preg_replace('/^\xEF\xBB\xBF/', '', $content);
     $lines = preg_split('/\r?\n/', $content);
     $newLines = [];
 
@@ -161,33 +154,37 @@ function resolveUrl($relative, $base) {
 }
 
 // ------------------------------------------------------
-// cURL
+// cURL ile içerik çek
 // ------------------------------------------------------
 function fetchUrl($url, $headers = []) {
     $ch = curl_init($url);
     $headerArr = [];
     foreach ($headers as $k => $v) $headerArr[] = "$k: $v";
-    $headerArr[] = "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
+    $headerArr[] = "User-Agent: " . ($headers['User-Agent'] ?? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
+    $headerArr[] = "Accept: */*";
+    $headerArr[] = "Connection: keep-alive";
+
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_HTTPHEADER     => $headerArr,
         CURLOPT_TIMEOUT        => 20,
+        CURLOPT_CONNECTTIMEOUT => 10,
         CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYHOST => false,
         CURLOPT_HEADER         => true,
+        CURLOPT_ENCODING       => '',
     ]);
     $response = curl_exec($ch);
     $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $contentType = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
     curl_close($ch);
-    $rawHeaders = substr($response, 0, $headerSize);
     $body = substr($response, $headerSize);
     return [
         'status' => $httpCode,
         'content_type' => $contentType,
         'body' => $body,
-        'raw_headers' => $rawHeaders,
     ];
 }
 
@@ -196,72 +193,114 @@ function fetchUrl($url, $headers = []) {
 // ======================================================
 $baseUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http')
          . '://' . $_SERVER['HTTP_HOST'] . $_SERVER['SCRIPT_NAME'];
+
 $action  = $_GET['action'] ?? null;
 $idParam = $_GET['ID'] ?? $_GET['id'] ?? null;
 $seg     = $_GET['seg'] ?? null;
+$stream  = $_GET['s'] ?? null;
+
+// .htaccess'ten gelen path (stream1.m3u8 gibi)
+$requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH);
+if (preg_match('#/stream([0-9]+)\.m3u8$#', $requestPath, $m)) {
+    $stream = 'stream' . $m[1];
+}
 
 try {
-    // 1. Ana sayfa / parametresiz istek -> tarayıcıysa listeye yönlendir
-    if (!$action && !$idParam && !$seg) {
+    // Parametresiz istek
+    if (!$action && !$idParam && !$seg && !$stream) {
         if (isWebBrowser()) {
             header("Location: {$baseUrl}?action=list", true, 302);
             exit;
         }
         http_response_code(404);
-        echo "Geçersiz İstek. Kullanım: ?action=list";
+        echo "Geçersiz İstek. Kullanım: ?action=list veya ?s=stream1";
         exit;
     }
 
-    // 2. M3U listesi
+    // ==================================================
+    // 1. M3U LİSTESİ
+    // ==================================================
     if ($action === 'list') {
         $channels = getChannels();
         $output = "#EXTM3U\n";
         foreach ($channels as $i => $ch) {
             $channelId = $i + 1;
             $extLine = $ch['extinf'] ?: "#EXTINF:-1, " . ($ch['name'] ?: "Kanal $channelId");
-            $output .= "$extLine\n{$baseUrl}?ID=$channelId\n";
+            $output .= "$extLine\n{$baseUrl}?s=stream{$channelId}\n";
         }
         header('Content-Type: application/x-mpegurl; charset=utf-8');
         header('Access-Control-Allow-Origin: *');
-        header('Cache-Control: public, max-age=60');
+        header('Cache-Control: no-cache');
         echo $output;
         exit;
     }
 
-    // 3. Tek kanal akışı
+    // ==================================================
+    // 2. stream1 -> ID'ye çevir
+    // ==================================================
+    if ($stream) {
+        $channels = getChannels();
+        $foundId = null;
+        foreach ($channels as $i => $ch) {
+            if ('stream' . ($i + 1) === $stream) {
+                $foundId = $i + 1;
+                break;
+            }
+        }
+        if ($foundId === null) {
+            http_response_code(404);
+            echo "Kanal bulunamadı: " . htmlspecialchars($stream);
+            exit;
+        }
+        $idParam = $foundId;
+    }
+
+    // ==================================================
+    // 3. TEK KANAL AKIŞI
+    // ==================================================
     if ($idParam) {
         $channelId = (int)$idParam;
         $channels = getChannels();
-
         if ($channelId < 1 || $channelId > count($channels)) {
             http_response_code(404);
             echo "Kanal bulunamadı.";
             exit;
         }
-
         $ch = $channels[$channelId - 1];
         $headers = $ch['headers'];
         if (empty($headers['User-Agent'])) $headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)';
 
         $resp = fetchUrl($ch['url'], $headers);
         $ct = $resp['content_type'] ?? '';
+        $body = $resp['body'];
 
-        if (strpos($ct, 'mpegurl') === false && strpos($ch['url'], '.m3u8') === false) {
+        $isM3u8 = (
+            stripos($ct, 'mpegurl') !== false ||
+            stripos($ct, 'm3u') !== false ||
+            strpos($ch['url'], '.m3u8') !== false ||
+            strpos(substr($body, 0, 10), '#EXTM3U') !== false
+        );
+
+        if (!$isM3u8) {
             header('Content-Type: ' . ($ct ?: 'video/mp2t'));
             header('Access-Control-Allow-Origin: *');
-            echo $resp['body'];
+            echo $body;
             exit;
         }
 
-        $rewritten = rewriteM3u8Content($resp['body'], $ch['url'], $baseUrl, $ch['headers']);
+        $rewritten = rewriteM3u8Content($body, $ch['url'], $baseUrl, $ch['headers']);
         header('Content-Type: application/vnd.apple.mpegurl');
         header('Access-Control-Allow-Origin: *');
-        header('Cache-Control: no-cache');
+        header('Cache-Control: no-cache, no-store, must-revalidate');
+        header('Pragma: no-cache');
+        header('Expires: 0');
         echo $rewritten;
         exit;
     }
 
-    // 4. Şifreli segment / alt playlist
+    // ==================================================
+    // 4. SEGMENT / ALT PLAYLIST
+    // ==================================================
     if ($seg) {
         $payload = decryptData($seg);
         if (!$payload || empty($payload['url'])) {
@@ -274,19 +313,30 @@ try {
 
         $resp = fetchUrl($payload['url'], $headers);
         $ct = $resp['content_type'] ?? '';
+        $body = $resp['body'];
 
-        if (strpos($ct, 'mpegurl') !== false || strpos($payload['url'], '.m3u8') !== false) {
-            $rewritten = rewriteM3u8Content($resp['body'], $payload['url'], $baseUrl, $payload['headers']);
+        $isM3u8 = (
+            stripos($ct, 'mpegurl') !== false ||
+            stripos($ct, 'm3u') !== false ||
+            strpos($payload['url'], '.m3u8') !== false ||
+            strpos(substr($body, 0, 10), '#EXTM3U') !== false
+        );
+
+        if ($isM3u8) {
+            $rewritten = rewriteM3u8Content($body, $payload['url'], $baseUrl, $payload['headers']);
             header('Content-Type: application/vnd.apple.mpegurl');
             header('Access-Control-Allow-Origin: *');
-            header('Cache-Control: no-cache');
+            header('Cache-Control: no-cache, no-store, must-revalidate');
+            header('Pragma: no-cache');
+            header('Expires: 0');
             echo $rewritten;
             exit;
         }
 
-        header('Content-Type: ' . ($ct ?: 'application/octet-stream'));
+        header('Content-Type: ' . ($ct ?: 'video/mp2t'));
         header('Access-Control-Allow-Origin: *');
-        echo $resp['body'];
+        header('Cache-Control: no-cache');
+        echo $body;
         exit;
     }
 
