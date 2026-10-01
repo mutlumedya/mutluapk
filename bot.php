@@ -1,259 +1,364 @@
 <?php
-const SECRET = 'BURAYA-UZUN-RASTGELE-BIR-ANAHTAR'; // değiştir
-const PROXY  = '';           // gerekirse 'http://kullanici:sifre@host:port'
-const REFRESH_SECONDS = 1;   // playlist yenileme
-const STALE_SECONDS = 30;    // hata olursa eski playlist'i sunma süresi
-const SEGMENT_CACHE_SECONDS = 60;
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+// ======================================================
+// PHP - M3U8 Proxy (AES-256-GCM Şifreli)
+// ======================================================
 
-set_time_limit(40);
-$cacheDir = sys_get_temp_dir() . '/ctv_cache';
-if (!is_dir($cacheDir)) @mkdir($cacheDir, 0777, true);
+const M3U_URL = "https://raw.githubusercontent.com/mutlumedya/mutluapk/refs/heads/main/oylebir.m3u";
 
-if (mt_rand(1, 200) === 1) {
-    foreach (glob($cacheDir . '/*') ?: [] as $f) {
-        if (is_file($f) && time() - filemtime($f) > 300) @unlink($f);
+// 32 byte anahtar (AES-256)
+const ENCRYPTION_KEY = "c7a8f9e1b2d3c4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9";
+
+// Önbellek dosyası
+const CACHE_FILE = __DIR__ . '/channels_cache.json';
+const CACHE_TTL  = 300; // 5 dakika
+
+// ------------------------------------------------------
+// Tarayıcı kontrolü
+// ------------------------------------------------------
+function isWebBrowser() {
+    $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
+    $accept = $_SERVER['HTTP_ACCEPT'] ?? '';
+    $browserKeywords = ['Chrome', 'Firefox', 'Safari', 'Edge', 'Opera', 'OPR', 'MSIE', 'Trident'];
+    $hasMozilla = strpos($ua, 'Mozilla') !== false;
+    $isBrowserUA = $hasMozilla && array_reduce($browserKeywords, fn($c, $k) => $c || strpos($ua, $k) !== false, false);
+    $isBrowserAccept = strpos($accept, 'text/html') !== false && strpos($accept, 'application/vnd.apple.mpegurl') === false;
+    return $isBrowserUA || $isBrowserAccept;
+}
+
+// ------------------------------------------------------
+// AES-256-GCM Şifreleme (URL-safe Base64)
+// ------------------------------------------------------
+function encryptData($dataObject) {
+    try {
+        $key = substr(ENCRYPTION_KEY, 0, 32);
+        $iv = random_bytes(12); // GCM için 12 byte IV
+        $plaintext = json_encode($dataObject);
+
+        $ciphertext = openssl_encrypt(
+            $plaintext,
+            'aes-256-gcm',
+            $key,
+            OPENSSL_RAW_DATA,
+            $iv,
+            $tag
+        );
+
+        if ($ciphertext === false) return '';
+
+        // IV + ciphertext + tag birleştir
+        $combined = $iv . $ciphertext . $tag;
+
+        // URL-safe Base64
+        $base64 = base64_encode($combined);
+        return rtrim(strtr($base64, '+/', '-_'), '=');
+    } catch (Exception $e) {
+        return '';
     }
 }
 
-function cfile($key) { global $cacheDir; return $cacheDir . '/' . md5($key); }
-function cget($key, $ttl) {
-    $f = cfile($key);
-    if (is_file($f) && time() - filemtime($f) < $ttl) {
-        $d = @unserialize(@file_get_contents($f));
-        if ($d) return $d;
+// ------------------------------------------------------
+// AES-256-GCM Çözme
+// ------------------------------------------------------
+function decryptData($cipherText) {
+    try {
+        $key = substr(ENCRYPTION_KEY, 0, 32);
+
+        // URL-safe Base64 -> normal Base64
+        $base64 = strtr($cipherText, '-_', '+/');
+        while (strlen($base64) % 4) $base64 .= '=';
+
+        $bytes = base64_decode($base64);
+        if ($bytes === false || strlen($bytes) < 28) return null; // 12 IV + 16 tag minimum
+
+        $iv = substr($bytes, 0, 12);
+        $tag = substr($bytes, -16);
+        $ciphertext = substr($bytes, 12, -16);
+
+        $plaintext = openssl_decrypt(
+            $ciphertext,
+            'aes-256-gcm',
+            $key,
+            OPENSSL_RAW_DATA,
+            $iv,
+            $tag
+        );
+
+        if ($plaintext === false) return null;
+        return json_decode($plaintext, true);
+    } catch (Exception $e) {
+        return null;
     }
-    return null;
-}
-function cput($key, $d) {
-    $f = cfile($key); $tmp = $f . '.' . getmypid();
-    @file_put_contents($tmp, serialize($d));
-    @rename($tmp, $f);
-}
-function withLock($key, $fn) {
-    $fp = fopen(cfile($key) . '.lock', 'c');
-    flock($fp, LOCK_EX);
-    try { return $fn(); } finally { flock($fp, LOCK_UN); fclose($fp); }
 }
 
-function hashCode($str) {
-    $h = 0;
-    for ($i = 0, $n = strlen($str); $i < $n; $i++) {
-        $h = (($h << 5) - $h) + ord($str[$i]);
-        $h &= 0xFFFFFFFF;
-        if ($h >= 0x80000000) $h -= 0x100000000;
+// ------------------------------------------------------
+// M3U Listesini Oku ve Önbellekle
+// ------------------------------------------------------
+function getChannels() {
+    // Önbellek kontrolü
+    if (file_exists(CACHE_FILE) && (time() - filemtime(CACHE_FILE) < CACHE_TTL)) {
+        $cached = json_decode(file_get_contents(CACHE_FILE), true);
+        if ($cached && count($cached) > 0) return $cached;
     }
-    return $h;
-}
 
-function guessUrl($c, $file = null) {
-    $slot = intdiv(time(), 300);
-    $t = (abs(hashCode($c['stream'] . $slot)) % 900000000) + 100000000;
-    $base = $c['customPath'] ?? 'live';
-    $file = $file ?: "chunklist_w{$t}.m3u8";
-    return "https://{$c['domain']}/{$base}/{$c['stream']}/{$file}?hash=9520d7940ddaf87a835f52f01f2206be";
-}
+    $ctx = stream_context_create([
+        'http' => [
+            'header' => "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n",
+            'timeout' => 15
+        ]
+    ]);
 
-function hdrs($referer) {
-    return [
-        'User-Agent: ' . UA,
-        'Referer: ' . $referer,
-        'Origin: https://canlitv.com',
-        'Accept-Language: tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Accept: */*',
-    ];
-}
-
-function fetchUrl($url, $headers, &$code = null, &$err = null, $timeout = 15) {
-    $ch = curl_init($url);
-    $opt = [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_MAXREDIRS => 5, CURLOPT_CONNECTTIMEOUT => 4, CURLOPT_TIMEOUT => $timeout,
-        CURLOPT_HTTPHEADER => $headers, CURLOPT_ENCODING => '',
-    ];
-    if (PROXY !== '') $opt[CURLOPT_PROXY] = PROXY;
-    curl_setopt_array($ch, $opt);
-    $body = curl_exec($ch);
-    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $err = curl_error($ch);
-    $GLOBALS['lastCtype'] = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
-    curl_close($ch);
-    return $body;
-}
-
-function absUrl($base, $rel) {
-    if (preg_match('#^https?://#i', $rel)) return $rel;
-    $p = parse_url($base);
-    $origin = $p['scheme'] . '://' . $p['host'] . (isset($p['port']) ? ':' . $p['port'] : '');
-    if ($rel[0] === '/') return $origin . $rel;
-    $dir = preg_replace('#/[^/]*$#', '/', $p['path'] ?? '/');
-    return $origin . $dir . $rel;
-}
-
-function proxyUrl($abs) {
-    $u = rtrim(strtr(base64_encode($abs), '+/', '-_'), '=');
-    $s = substr(hash_hmac('sha256', $abs, SECRET), 0, 24);
-    return '/_p?u=' . $u . '&s=' . $s;
-}
-
-function isM3u8($u) { return (bool) preg_match('#\.m3u8(\?|$)#i', $u); }
-
-function rewritePlaylist($body, $baseUrl) {
-    $out = [];
-    foreach (preg_split('/\r\n|\n|\r/', $body) as $line) {
-        $t = trim($line);
-        if ($t === '') { $out[] = $line; continue; }
-        if ($t[0] === '#') {
-            $out[] = preg_replace_callback('/URI="([^"]+)"/', function ($m) use ($baseUrl) {
-                return 'URI="' . proxyUrl(absUrl($baseUrl, $m[1])) . '"';
-            }, $line);
-        } else {
-            $out[] = proxyUrl(absUrl($baseUrl, $t));
+    $content = @file_get_contents(M3U_URL, false, $ctx);
+    if ($content === false) {
+        // Önbellek varsa eski halini kullan
+        if (file_exists(CACHE_FILE)) {
+            return json_decode(file_get_contents(CACHE_FILE), true) ?: [];
         }
+        throw new Exception('Liste yüklenemedi');
     }
-    return implode("\n", $out);
-}
 
-function sendPlaylist($body, $baseUrl) {
-    header('Content-Type: application/vnd.apple.mpegurl');
-    header('Cache-Control: no-cache');
-    header('Access-Control-Allow-Origin: *');
-    echo rewritePlaylist($body, $baseUrl);
-    exit;
-}
+    $lines = preg_split('/\r?\n/', $content);
+    $channels = [];
+    $current = ['extinf' => '', 'name' => '', 'headers' => [], 'url' => ''];
+    $expectingUrl = false;
 
-$path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?: '/';
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if ($line === '') continue;
 
-// ---------- Alt playlist / parça proxy ----------
-if ($path === '/_p') {
-    $abs = base64_decode(strtr($_GET['u'] ?? '', '-_', '+/'));
-    $sig = $_GET['s'] ?? '';
-    if (!$abs || !hash_equals(substr(hash_hmac('sha256', $abs, SECRET), 0, 24), $sig)) {
-        http_response_code(403); exit('geçersiz');
-    }
-    $isList = isM3u8($abs);
-    $ttl = $isList ? REFRESH_SECONDS : SEGMENT_CACHE_SECONDS;
-    $key = 'p|' . $abs;
-
-    $d = cget($key, $ttl);
-    if (!$d) {
-        $d = withLock($key, function () use ($key, $abs, $ttl) {
-            $d = cget($key, $ttl);
-            if ($d) return $d;
-            $body = fetchUrl($abs, hdrs('https://canlitv.com/'), $code, $err);
-            if ($body !== false && $code >= 200 && $code < 400) {
-                $d = ['b' => $body, 't' => $GLOBALS['lastCtype']];
-                cput($key, $d);
-                return $d;
+        if (strpos($line, '#EXTINF') === 0) {
+            if (!empty($current['url'])) $channels[] = $current;
+            $name = '';
+            if (preg_match('/,([^,]+)$/', $line, $m)) $name = trim($m[1]);
+            $current = ['extinf' => $line, 'name' => $name, 'headers' => [], 'url' => ''];
+            $expectingUrl = true;
+        }
+        elseif (strpos($line, '#EXTVLCOPT:http-user-agent=') === 0) {
+            $current['headers']['User-Agent'] = substr($line, strlen('#EXTVLCOPT:http-user-agent='));
+        }
+        elseif (strpos($line, '#EXTVLCOPT:http-referrer=') === 0) {
+            $current['headers']['Referer'] = substr($line, strlen('#EXTVLCOPT:http-referrer='));
+        }
+        elseif (strpos($line, '#EXTVLCOPT:http-origin=') === 0) {
+            $current['headers']['Origin'] = substr($line, strlen('#EXTVLCOPT:http-origin='));
+        }
+        elseif (strpos($line, 'http://') === 0 || strpos($line, 'https://') === 0) {
+            if ($expectingUrl || empty($current['url'])) {
+                $current['url'] = $line;
+                $channels[] = $current;
+                $current = ['extinf' => '', 'name' => '', 'headers' => [], 'url' => ''];
+                $expectingUrl = false;
             }
-            return cget($key, STALE_SECONDS); // hata: eski kopyayı sun
-        });
+        }
     }
-    if (!$d) { http_response_code(502); exit; }
+    if (!empty($current['url'])) $channels[] = $current;
 
-    if ($isList || strpos($d['b'], '#EXTM3U') === 0) sendPlaylist($d['b'], $abs);
-    header('Content-Type: ' . ($d['t'] ?: 'video/mp2t'));
-    header('Access-Control-Allow-Origin: *');
-    echo $d['b'];
-    exit;
+    $channels = array_values(array_filter($channels, fn($c) => !empty($c['url'])));
+    if (count($channels) === 0) throw new Exception('Hiç kanal bulunamadı');
+
+    // Önbelleğe yaz
+    @file_put_contents(CACHE_FILE, json_encode($channels, JSON_UNESCAPED_UNICODE));
+    return $channels;
 }
 
-// ---------- Kanal ----------
-$raw = trim(mb_strtolower(ltrim($path, '/'), 'UTF-8'));
-$channelPath = preg_replace('/\s+/', '-', rawurldecode($raw));
-if ($channelPath === '' || $channelPath === 'index.php') {
-    http_response_code(400);
-    header('Content-Type: text/plain; charset=utf-8');
-    exit('Kullanım için kanal adı belirtin. Örnek: /az-tv, /cankiri-tv, /arb-gunes-tv, /xezer-tv');
+// ------------------------------------------------------
+// M3U8 içeriğini yeniden yaz (segmentleri şifrele)
+// ------------------------------------------------------
+function rewriteM3u8Content($content, $baseStreamUrl, $baseProxyUrl, $headersObj) {
+    $lines = preg_split('/\r?\n/', $content);
+    $newLines = [];
+
+    foreach ($lines as $line) {
+        $trimmed = trim($line);
+        if ($trimmed === '') continue;
+
+        if (strpos($trimmed, '#') === 0) {
+            // URI="..." içeren satırları şifrele
+            if (strpos($trimmed, 'URI=') !== false) {
+                $trimmed = preg_replace_callback('/URI="([^"]+)"/', function($m) use ($baseStreamUrl, $baseProxyUrl, $headersObj) {
+                    $fullUrl = resolveUrl($m[1], $baseStreamUrl);
+                    $encrypted = encryptData(['url' => $fullUrl, 'headers' => $headersObj]);
+                    return 'URI="' . $baseProxyUrl . '/proxy/' . $encrypted . '"';
+                }, $trimmed);
+            }
+            $newLines[] = $trimmed;
+        } else {
+            $fullUrl = resolveUrl($trimmed, $baseStreamUrl);
+            $encrypted = encryptData(['url' => $fullUrl, 'headers' => $headersObj]);
+            $newLines[] = $baseProxyUrl . '/proxy/' . $encrypted;
+        }
+    }
+    return implode("\n", $newLines);
 }
 
-$db = [
-    "az-tv" => ["id" => "32", "domain" => "yayin2.canlitv.fun", "stream" => "aztv.stream"],
-    "aztv" => ["id" => "32", "domain" => "yayin2.canlitv.fun", "stream" => "aztv.stream"],
-    "arb-gunes-tv" => ["id" => "12988", "domain" => "yayin2.canlitv.fun", "stream" => "arbgunes.stream"],
-    "arbgunes" => ["id" => "12988", "domain" => "yayin2.canlitv.fun", "stream" => "arbgunes.stream"],
-    "xezer-tv" => ["id" => "11827", "domain" => "yayin2.canlitv.fun", "stream" => "xezertv.stream"],
-    "xezertv" => ["id" => "11827", "domain" => "yayin2.canlitv.fun", "stream" => "xezertv.stream"],
-    "arb-tv" => ["id" => "12985", "domain" => "yayin2.canlitv.fun", "stream" => "arbtv.stream"],
-    "arbtv" => ["id" => "12985", "domain" => "yayin2.canlitv.fun", "stream" => "arbtv.stream"],
-    "cbc-sport" => ["id" => "12732", "domain" => "yayin2.canlitv.fun", "stream" => "cbcsport.stream"],
-    "cbcsport" => ["id" => "12732", "domain" => "yayin2.canlitv.fun", "stream" => "cbcsport.stream"],
-    "ictimai-tv" => ["id" => "903", "domain" => "yayin2.canlitv.fun", "stream" => "ictimaitv.stream"],
-    "space-tv" => ["id" => "12312", "domain" => "yayin2.canlitv.fun", "stream" => "spacetv.stream"],
-    "atv" => ["id" => "11229", "domain" => "yayin2.canlitv.fun", "stream" => "atv.stream"],
-    "cankiri-tv" => ["id" => "9999", "domain" => "yayin1.canlitv.fun", "stream" => "cankiritv.stream", "customPath" => "canlitv"],
-    "cankiritv" => ["id" => "9999", "domain" => "yayin1.canlitv.fun", "stream" => "cankiritv.stream", "customPath" => "canlitv"],
-];
-$channel = $db[$channelPath] ?? [
-    "id" => "32", "domain" => "yayin2.canlitv.fun",
-    "stream" => str_replace('-', '', $channelPath) . ".stream",
-];
+// ------------------------------------------------------
+// Göreceli URL'yi mutlak URL'ye çevir
+// ------------------------------------------------------
+function resolveUrl($relative, $base) {
+    if (preg_match('#^https?://#i', $relative)) return $relative;
 
-function resolveChannel($channel, $channelPath, &$log) {
-    $H = hdrs('https://canlitv.com/' . $channelPath);
+    $parts = parse_url($base);
+    if (!isset($parts['scheme'])) return $relative;
 
-    if ($channel['id'] !== "9999") {
-        @fetchUrl("https://canlitv.com/online/online.php?sayfa={$channel['id']}&tur=1&ref=0&onay=1", $H, $c1, $e1, 5);
-        $log[] = "online tetikleyici: HTTP $c1 $e1";
+    $scheme = $parts['scheme'];
+    $host = $parts['host'] ?? '';
+    $port = isset($parts['port']) ? ':' . $parts['port'] : '';
+    $path = $parts['path'] ?? '/';
+    $dir = substr($path, 0, strrpos($path, '/') + 1);
+
+    if (strpos($relative, '//') === 0) {
+        return $scheme . ':' . $relative;
     }
+    if (strpos($relative, '/') === 0) {
+        return $scheme . '://' . $host . $port . $relative;
+    }
+    return $scheme . '://' . $host . $port . $dir . $relative;
+}
 
-    $cands = [];
-    $html = fetchUrl("https://canlitv.com/player/index.php?id={$channel['id']}&mobile=1", $H, $c2, $e2, 8);
-    $log[] = "player sayfası: HTTP $c2 $e2";
-    if ($html !== false) {
-        $re = '#https?://[^"\'\s]+\.m3u8(\?[^"\'\s]*)?#i';
-        if (preg_match($re, $html, $m) || preg_match($re, str_replace('\\', '', $html), $m)) {
-            $cands[] = $m[0];
-            $log[] = "yakalanan: " . $m[0];
+// ------------------------------------------------------
+// cURL ile fetch
+// ------------------------------------------------------
+function fetchUrl($url, $headers = []) {
+    $ch = curl_init($url);
+    $headerArr = [];
+    foreach ($headers as $k => $v) $headerArr[] = "$k: $v";
+    $headerArr[] = "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
+
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_HTTPHEADER     => $headerArr,
+        CURLOPT_TIMEOUT        => 20,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_HEADER         => true,
+    ]);
+    $response = curl_exec($ch);
+    $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $contentType = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    curl_close($ch);
+
+    $rawHeaders = substr($response, 0, $headerSize);
+    $body = substr($response, $headerSize);
+
+    return [
+        'status' => $httpCode,
+        'content_type' => $contentType,
+        'body' => $body,
+        'raw_headers' => $rawHeaders,
+    ];
+}
+
+// ======================================================
+// ROUTER
+// ======================================================
+
+$pathname = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$baseUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'];
+$idParam = $_GET['ID'] ?? $_GET['id'] ?? null;
+
+try {
+    // 1. Ana sayfa yönlendirme
+    if ($pathname === '/' || $pathname === '/index.html' || $pathname === '/index.php') {
+        if (isWebBrowser()) {
+            header("Location: $baseUrl/index.m3u", true, 302);
+            exit;
         }
     }
 
-    // yayin1 + yayin2, live + canlitv: kanalın kendi ayarı önce
-    $other = ($channel['domain'] === 'yayin1.canlitv.fun') ? 'yayin2.canlitv.fun' : 'yayin1.canlitv.fun';
-    $ownBase = $channel['customPath'] ?? 'live';
-    $otherBase = ($ownBase === 'live') ? 'canlitv' : 'live';
-    foreach ([$channel['domain'], $other] as $dom) {
-        foreach ([$ownBase, $otherBase] as $b) {
-            $c = $channel; $c['domain'] = $dom; $c['customPath'] = $b;
-            $cands[] = guessUrl($c, 'playlist.m3u8');
-            $cands[] = guessUrl($c);
+    // 2. /index.m3u listesi
+    if ($pathname === '/index.m3u' || ($pathname === '/index.m3u8' && !$idParam)) {
+        $channels = getChannels();
+        $output = "#EXTM3U\n";
+        foreach ($channels as $i => $ch) {
+            $channelId = $i + 1;
+            $extLine = $ch['extinf'] ?: "#EXTINF:-1, " . ($ch['name'] ?: "Kanal $channelId");
+            $output .= "$extLine\n$baseUrl/index.m3u8?ID=$channelId\n";
         }
+        header('Content-Type: application/x-mpegurl; charset=utf-8');
+        header('Access-Control-Allow-Origin: *');
+        header('Cache-Control: public, max-age=60');
+        echo $output;
+        exit;
     }
 
-    foreach (array_unique($cands) as $u) {
-        $body = fetchUrl($u, hdrs('https://canlitv.com/'), $code, $err, 6);
-        $log[] = "deneme: $u => HTTP $code $err";
-        if ($body !== false && $code === 200 && strpos($body, '#EXTM3U') !== false) {
-            return ['url' => $u, 'body' => $body];
+    // 3. /index.m3u8?ID=X
+    if ($pathname === '/index.m3u8' && $idParam) {
+        $channelId = (int)$idParam;
+        $channels = getChannels();
+
+        if ($channelId < 1 || $channelId > count($channels)) {
+            http_response_code(404);
+            echo "Kanal bulunamadı.";
+            exit;
         }
+
+        $ch = $channels[$channelId - 1];
+        $headers = $ch['headers'];
+        if (empty($headers['User-Agent'])) $headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)';
+
+        $resp = fetchUrl($ch['url'], $headers);
+        $ct = $resp['content_type'] ?? '';
+
+        // Doğrudan .ts akışı
+        if (strpos($ct, 'mpegurl') === false && strpos($ch['url'], '.m3u8') === false) {
+            header('Content-Type: ' . ($ct ?: 'video/mp2t'));
+            header('Access-Control-Allow-Origin: *');
+            echo $resp['body'];
+            exit;
+        }
+
+        // M3U8 manifest
+        $rewritten = rewriteM3u8Content($resp['body'], $ch['url'], $baseUrl, $ch['headers']);
+        header('Content-Type: application/vnd.apple.mpegurl');
+        header('Access-Control-Allow-Origin: *');
+        header('Cache-Control: no-cache');
+        echo $rewritten;
+        exit;
     }
-    return null;
+
+    // 4. /proxy/...
+    if (strpos($pathname, '/proxy/') === 0) {
+        $encrypted = substr($pathname, strlen('/proxy/'));
+        if ($encrypted === '') {
+            http_response_code(400);
+            echo "Geçersiz Şifreli İstek.";
+            exit;
+        }
+
+        $payload = decryptData($encrypted);
+        if (!$payload || empty($payload['url'])) {
+            http_response_code(403);
+            echo "Geçersiz veya Süresi Dolmuş Bağlantı.";
+            exit;
+        }
+
+        $headers = $payload['headers'] ?? [];
+        if (empty($headers['User-Agent'])) $headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)';
+
+        $resp = fetchUrl($payload['url'], $headers);
+        $ct = $resp['content_type'] ?? '';
+
+        // Alt m3u8
+        if (strpos($ct, 'mpegurl') !== false || strpos($payload['url'], '.m3u8') !== false) {
+            $rewritten = rewriteM3u8Content($resp['body'], $payload['url'], $baseUrl, $payload['headers']);
+            header('Content-Type: application/vnd.apple.mpegurl');
+            header('Access-Control-Allow-Origin: *');
+            header('Cache-Control: no-cache');
+            echo $rewritten;
+            exit;
+        }
+
+        // Normal segment
+        header('Content-Type: ' . ($ct ?: 'application/octet-stream'));
+        header('Access-Control-Allow-Origin: *');
+        echo $resp['body'];
+        exit;
+    }
+
+    http_response_code(404);
+    echo "Geçersiz İstek";
+
+} catch (Exception $e) {
+    http_response_code(500);
+    echo "Sunucu Hatası: " . $e->getMessage();
 }
-
-$debug = isset($_GET['debug']);
-$log = [];
-$key = 'ch|' . $channelPath;
-
-if ($debug) {
-    $r = resolveChannel($channel, $channelPath, $log);
-    header('Content-Type: text/plain; charset=utf-8');
-    echo ($r ? "BULUNDU: " . $r['url'] : "m3u8 alınamadı") . "\n\n" . implode("\n", $log);
-    exit;
-}
-
-$r = cget($key, REFRESH_SECONDS);
-if (!$r) {
-    $r = withLock($key, function () use ($key, $channel, $channelPath, &$log) {
-        $r = cget($key, REFRESH_SECONDS);
-        if ($r) return $r;
-        $r = resolveChannel($channel, $channelPath, $log);
-        if ($r) { cput($key, $r); return $r; }
-        return cget($key, STALE_SECONDS); // hata: son iyi playlist
-    });
-}
-
-if ($r) sendPlaylist($r['body'], $r['url']);
-
-http_response_code(502);
-header('Content-Type: text/plain; charset=utf-8');
-echo "m3u8 alınamadı\n\n" . implode("\n", $log);
