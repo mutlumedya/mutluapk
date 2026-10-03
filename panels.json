@@ -1,0 +1,16 @@
+{
+    "1779462922": {
+        "name": "inadinaTb",
+        "host": "http://buluttim.shop:8080",
+        "user": "ali1323",
+        "pass": "bh.06022024"
+    },
+    "1779463983": {
+        "name": "jkj\u00f6",
+        "host": "http://europe77.xyz:2095",
+        "user": "srdr9444",
+        "pass": "usqzhDA"
+    }
+}
+
+http://buluttim.shop:8080/player_api.php?username=&password=&action=get_live_streams&category_id=1
