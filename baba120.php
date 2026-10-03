@@ -1,32 +1,18 @@
 <?php
 /**
- * baba120 — 7/24 Sanal Canlı Yayın (Tek Dosya PHP)
- *
- * Kullanım:
- *   1) Bu dosyayı baba120.php olarak kaydet
- *   2) Aynı dizine "data" klasörü aç (yazılabilir: chmod 755 veya 777)
- *   3) Tarayıcıda aç:
- *        http://SUNUCU/m3u/baba120.php?p=/admin
- *        http://SUNUCU/m3u/baba120.php?p=/live.m3u8
- *
- * Temiz URL (Apache PATH_INFO desteklerse):
- *   /baba120.php/admin
- *   /baba120.php/live.m3u8
+ * baba120 — 7/24 Sanal Canlı Yayın (Tek Dosya PHP) — DÜZELTİLMİŞ
  */
 
 declare(strict_types=1);
 error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
 ini_set('display_errors', '0');
 
-/* ============ Debug (sadece ?debug=1 ile) ============ */
+/* ============ Debug ============ */
 if (isset($_GET['debug'])) {
     header('Content-Type: text/plain; charset=utf-8');
     echo "REQUEST_URI   : " . ($_SERVER['REQUEST_URI'] ?? '') . "\n";
     echo "SCRIPT_NAME   : " . ($_SERVER['SCRIPT_NAME'] ?? '') . "\n";
-    echo "PHP_SELF      : " . ($_SERVER['PHP_SELF'] ?? '') . "\n";
     echo "PATH_INFO     : " . ($_SERVER['PATH_INFO'] ?? '(yok)') . "\n";
-    echo "ORIG_PATH_INFO: " . ($_SERVER['ORIG_PATH_INFO'] ?? '(yok)') . "\n";
-    echo "QUERY_STRING  : " . ($_SERVER['QUERY_STRING'] ?? '') . "\n";
     echo "GET p         : " . ($_GET['p'] ?? '(yok)') . "\n";
     echo "PHP Version   : " . PHP_VERSION . "\n";
     exit;
@@ -519,12 +505,12 @@ function handle_live(): void {
     $d0 = decomp($tl, $start);
     $dseq = $d0['c'] * count($tl['slots']) + $d0['s'] + ($d0['j'] > 0 ? 1 : 0);
 
-    // /seg yolu bu dosyaya göre hesapla (script dizini + baba120.php + /seg)
-    $segPath = $GLOBALS['__SCRIPT_URL'] . '/seg';
+    // /seg yolu: baba120.php?p=/seg
+    $segPath = $GLOBALS['__SCRIPT_URL'] . '?p=/seg';
 
     $wrap = function (string $u) use ($cfg, $segPath): string {
         if (!$cfg['proxy']) return $u;
-        return $segPath . '?u=' . b64u($u) . '&s=' . sign_url($cfg['secret'], $u);
+        return $segPath . '&u=' . b64u($u) . '&s=' . sign_url($cfg['secret'], $u);
     };
     $wrapLine = function (string $line) use ($wrap): string {
         if (!preg_match('/URI="([^"]*)"/', $line, $m)) return $line;
@@ -648,7 +634,6 @@ function handle_manifest(): void {
     $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
     $host = $_SERVER['HTTP_HOST'];
     $scriptUrl = $GLOBALS['__SCRIPT_URL'];
-    $origin = $scheme . '://' . $host . $scriptUrl;
     $icon = '';
     if (!empty($cfg['logo']['url'])) {
         $icon = str_starts_with($cfg['logo']['url'], '/') ? $scheme . '://' . $host . $cfg['logo']['url'] : $cfg['logo']['url'];
@@ -656,8 +641,8 @@ function handle_manifest(): void {
     $m = [
         'name' => $name,
         'short_name' => mb_substr($name, 0, 12),
-        'start_url' => $scriptUrl . '/live.m3u8',
-        'scope' => $scriptUrl . '/',
+        'start_url' => $scriptUrl . '?p=/live.m3u8',
+        'scope' => $scriptUrl,
         'display' => 'fullscreen',
         'display_override' => ['fullscreen', 'standalone'],
         'orientation' => 'landscape',
@@ -1033,7 +1018,7 @@ function handle_api(string $path): void {
         case '/api/out-save':
         case '/api/out-start':
         case '/api/out-stop':
-            send_json(['error' => 'Bu PHP sürümünde RTMP/YouTube gönderici yok. Sunucuda ffmpeg ile gönderin.'], 501);
+            send_json(['error' => 'Bu PHP sürümünde RTMP/YouTube gönderici yok.'], 501);
             return;
         case '/api/pump':
             send_text('');
@@ -1140,9 +1125,9 @@ video{width:100%;height:100%;background:#000;object-fit:cover}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
 <script>
 var v=document.getElementById('v'),w=document.getElementById('w'),lg=document.getElementById('lg'),tt=document.getElementById('t'),info=document.getElementById('info'),er=document.getElementById('er');
-var base=location.pathname.replace(/\/[^\/]*$/,'');
-var src=base+'/live.m3u8?raw=1';
-var apiNow=base+'/api/now';
+var BASE=location.pathname;
+var src=BASE+'?p=/live.m3u8&raw=1';
+var apiNow=BASE+'?p=/api/now';
 function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function errMsg(m){er.textContent=m;er.style.display=m?'block':'none'}
 var h=null,lastLogo='',N=null;
@@ -1227,7 +1212,7 @@ function applyLogo(l){
   if(s===lastLogo)return;lastLogo=s;
   lgS=l;
   if(l&&l.on&&l.url){
-    lg.src=l.url.startsWith('/')?(base+l.url):l.url;
+    lg.src=l.url.startsWith('/')?(location.origin+l.url):l.url;
   }
   placeLogo();
 }
@@ -1295,7 +1280,7 @@ now();setInterval(now,5000);
 </script></body></html>
 HTML;
 
-/* ============ Admin HTML ============ */
+/* ============ Admin HTML (DÜZELTİLMİŞ — BASE doğru, ?p=/... kullanılıyor) ============ */
 const ADMIN_HTML = <<<'HTML'
 <!doctype html>
 <html lang="tr"><head><meta charset="utf-8">
@@ -1354,7 +1339,7 @@ code{background:#0f1115;padding:2px 6px;border-radius:6px;word-break:break-all}
 <div id="app"></div>
 <div id="modal"></div>
 <script>
-var BASE=location.pathname.replace(/\/[^\/]*$/,'');
+var BASE=location.pathname;
 var KEY=localStorage.getItem('b120key')||'';
 var S=null,filled=false,V='';
 var L={on:false,url:'',x:2,y:4,size:12,opacity:100};
@@ -1370,7 +1355,8 @@ function hm2(sec){sec=((Math.round(sec)%86400)+86400)%86400;return pad(Math.floo
 function toast(t){var e=$('toast');if(!e)return;e.textContent=t;e.style.display='block';clearTimeout(window.__to);window.__to=setTimeout(function(){e.style.display='none'},3500)}
 function setMsg(t){var m=$('msg');if(m)m.textContent=t||''}
 function api(path,method,body){
-  var u=(path.charAt(0)==='/'?BASE+path:BASE+'/'+path);
+  var p=path.replace(/^\//,'');
+  var u=BASE+'?p=/'+p;
   return fetch(u,{method:method||'GET',headers:{'Content-Type':'application/json','X-Admin-Key':KEY},body:body?JSON.stringify(body):undefined})
   .then(function(r){return r.json().then(function(j){
     if(r.status===401){KEY='';localStorage.removeItem('b120key');init();throw new Error('Yetkisiz');}
@@ -1380,7 +1366,7 @@ function api(path,method,body){
 }
 function init(){
   clearInterval(window.__t);clearInterval(window.__p);
-  fetch(BASE+'/api/status').then(function(r){return r.json()}).then(function(s){
+  fetch(BASE+'?p=/api/status').then(function(r){return r.json()}).then(function(s){
     if(s.error){$('app').innerHTML='<div class="card">'+esc(s.error)+'</div>';return;}
     if(!s.hasKey)setup();else if(!KEY)login();else{
       api('/api/state').then(function(){panel()}).catch(function(){});
@@ -1392,7 +1378,7 @@ function setup(){
 }
 function doSetup(){
   var k=$('k').value;
-  fetch(BASE+'/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})})
+  fetch(BASE+'?p=/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})})
   .then(function(r){return r.json()}).then(function(j){
     if(j.error){setMsg(j.error);return;}
     KEY=k;localStorage.setItem('b120key',k);panel();
@@ -1415,8 +1401,9 @@ function gridBtns(fn){
 
 function panel(){
   filled=false;
+  var live=BASE+'?p=/live.m3u8';
   $('app').innerHTML=
-  '<div class="bar"><h1>baba120 Yayın Paneli</h1><span><a href="'+BASE+'/live.m3u8" target="_blank">Yayını Aç</a> <button class="b2" onclick="logout()">Çıkış</button></span></div>'
+  '<div class="bar"><h1>baba120 Yayın Paneli</h1><span><a href="'+live+'" target="_blank">Yayını Aç</a> <button class="b2" onclick="logout()">Çıkış</button></span></div>'
   +'<div class="card" id="st"></div>'
 
   +'<div class="card"><h2>Film / Dizi Listesi Ekle</h2>'
@@ -1462,7 +1449,7 @@ function panel(){
   +'<div style="margin-top:10px"><button class="green" onclick="saveLogo()">Logoyu Kaydet</button></div></div>'
 
   +'<div class="card"><h2>ffmpeg Komutu (Sunucuda 7/24 yayın)</h2>'
-  +'<div class="s">Bu PHP sürümünde RTMP gönderici yoktur. Sunucuda/PC\\'de ffmpeg ile yayın yapmak için aşağıdaki komutu kullan.</div>'
+  +'<div class="s">Bu PHP sürümünde RTMP gönderici yoktur. Sunucuda/PC de ffmpeg ile yayın yapmak için aşağıdaki komutu kullan.</div>'
   +'<label>YouTube yayın anahtarı</label>'
   +'<input type="text" id="ytk" placeholder="YouTube yayın anahtarı" autocomplete="off" oninput="drawFf()">'
   +'<textarea id="ffc" readonly style="min-height:110px"></textarea>'
@@ -1484,7 +1471,7 @@ function load(){
     S=s;
     if(!filled){filled=true;fillSettings();}
     drawStatus();drawList();drawProgram();
-  }).catch(function(){});
+  }).catch(function(e){var el=$('st');if(el)el.innerHTML='<div class="banner stop">Durum alınamadı: '+esc(e.message)+'</div>';});
 }
 function fillSettings(){
   L=S.logo||L;
@@ -1497,7 +1484,7 @@ function fillSettings(){
   if(S.tz!==tz){api('/api/settings','POST',{tz:tz}).catch(function(){});}
   drawLogo();
 }
-function liveUrl(){return location.origin+BASE+'/live.m3u8'}
+function liveUrl(){return location.origin+BASE+'?p=/live.m3u8'}
 function drawStatus(){
   var h='',n=S.now;
   if(S.running){
@@ -1541,7 +1528,7 @@ function restartLive(){
 }
 function verify(){
   setTimeout(function(){
-    fetch(liveUrl()+'?raw=1',{cache:'no-store'}).then(function(r){return r.text().then(function(t){
+    fetch(liveUrl()+'&raw=1',{cache:'no-store'}).then(function(r){return r.text().then(function(t){
       V=(r.ok&&t.indexOf('#EXTM3U')===0)?'✓ Yayın çalışıyor':('⚠ Hata: '+t.slice(0,80));
       drawStatus();
     })}).catch(function(){V='⚠ Ulaşılamadı';drawStatus();});
@@ -1551,7 +1538,7 @@ function setLoop(v){api('/api/loop','POST',{loop:v}).then(load)}
 function copyTxt(t){navigator.clipboard.writeText(t);toast('Kopyalandı')}
 function ffcmd(){
   var k=($('ytk')&&$('ytk').value.trim())||'YAYIN_ANAHTARI';
-  return 'while true; do ffmpeg -re -i "'+liveUrl()+'?raw=1" -c:v libx264 -preset veryfast -b:v 3000k -maxrate 3000k -bufsize 6000k -g 60 -keyint_min 60 -vf scale=1280:720 -r 30 -c:a aac -b:a 128k -ar 44100 -ac 2 -f flv "rtmp://a.rtmp.youtube.com/live2/'+k+'"; sleep 3; done';
+  return 'while true; do ffmpeg -re -i "'+liveUrl()+'&raw=1" -c:v libx264 -preset veryfast -b:v 3000k -maxrate 3000k -bufsize 6000k -g 60 -keyint_min 60 -vf scale=1280:720 -r 30 -c:a aac -b:a 128k -ar 44100 -ac 2 -f flv "rtmp://a.rtmp.youtube.com/live2/'+k+'"; sleep 3; done';
 }
 function drawFf(){var e=$('ffc');if(e)e.value=ffcmd()}
 
@@ -1892,21 +1879,13 @@ init();
 </script></body></html>
 HTML;
 
-/* ============ Router — DÜZELTİLDİ ============ */
-// Öncelik sırası:
-//   1) ?p=/admin        (her hostingde kesin çalışır)
-//   2) PATH_INFO        (Apache/nginx izin verirse)
-//   3) REQUEST_URI'den baba120.php sonrasını kes
-
-$__scriptBase = basename($_SERVER['SCRIPT_NAME']);           // baba120.php
-$__scriptDir  = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\'); // /m3u
-
-// Script'in tam URL yolu (tarayıcıdan erişilebilir): /m3u/baba120.php
+/* ============ Router (DÜZELTİLMİŞ) ============ */
+$__scriptBase = basename($_SERVER['SCRIPT_NAME']);
+$__scriptDir  = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\');
 $__scriptUrl = ($__scriptDir === '' || $__scriptDir === '/' ? '' : $__scriptDir) . '/' . $__scriptBase;
 if ($__scriptUrl[0] !== '/') $__scriptUrl = '/' . $__scriptUrl;
 $GLOBALS['__SCRIPT_URL'] = $__scriptUrl;
 
-// Yolu hesapla
 if (isset($_GET['p'])) {
     $__rel = '/' . ltrim((string)$_GET['p'], '/');
 } elseif (!empty($_SERVER['PATH_INFO'])) {
@@ -1934,7 +1913,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 try {
-    if ($__rel === '/') { header('Location: ' . $__scriptUrl . '/live.m3u8', true, 302); exit; }
+    if ($__rel === '/') { header('Location: ' . $__scriptUrl . '?p=/live.m3u8', true, 302); exit; }
     if ($__rel === '/admin') { send_html(ADMIN_HTML); exit; }
     if ($__rel === '/live.m3u8') { handle_live(); exit; }
     if ($__rel === '/seg') { handle_seg_proxy(); exit; }
