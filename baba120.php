@@ -5,25 +5,32 @@
  * Kullanım:
  *   1) Bu dosyayı baba120.php olarak kaydet
  *   2) Aynı dizine "data" klasörü aç (yazılabilir: chmod 755 veya 777)
- *   3) Tarayıcıda /baba120.php/admin aç
+ *   3) Tarayıcıda aç:
+ *        http://SUNUCU/m3u/baba120.php?p=/admin
+ *        http://SUNUCU/m3u/baba120.php?p=/live.m3u8
  *
- * Adresler (baba120.php üzerinden):
- *   /baba120.php                -> /baba120.php/live.m3u8'e yönlendirir
- *   /baba120.php/live.m3u8      -> Canlı yayın (tarayıcıda logolu oynatıcı)
- *   /baba120.php/admin          -> Admin panel
- *   /baba120.php/seg            -> Segment proxy
- *   /baba120.php/logo           -> Logo
- *   /baba120.php/manifest.webmanifest -> PWA manifest
- *   /baba120.php/api/now        -> Şu an oynayan bilgisi
- *   /baba120.php/api/*          -> Admin API
- *
- * NOT: RTMP/YouTube gönderici bu sürümde YOKTUR.
- *      Onun için sunucuda ffmpeg ile gönderim yap (panel ffmpeg komutunu gösterir).
+ * Temiz URL (Apache PATH_INFO desteklerse):
+ *   /baba120.php/admin
+ *   /baba120.php/live.m3u8
  */
 
 declare(strict_types=1);
 error_reporting(E_ALL & ~E_DEPRECATED & ~E_NOTICE);
 ini_set('display_errors', '0');
+
+/* ============ Debug (sadece ?debug=1 ile) ============ */
+if (isset($_GET['debug'])) {
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "REQUEST_URI   : " . ($_SERVER['REQUEST_URI'] ?? '') . "\n";
+    echo "SCRIPT_NAME   : " . ($_SERVER['SCRIPT_NAME'] ?? '') . "\n";
+    echo "PHP_SELF      : " . ($_SERVER['PHP_SELF'] ?? '') . "\n";
+    echo "PATH_INFO     : " . ($_SERVER['PATH_INFO'] ?? '(yok)') . "\n";
+    echo "ORIG_PATH_INFO: " . ($_SERVER['ORIG_PATH_INFO'] ?? '(yok)') . "\n";
+    echo "QUERY_STRING  : " . ($_SERVER['QUERY_STRING'] ?? '') . "\n";
+    echo "GET p         : " . ($_GET['p'] ?? '(yok)') . "\n";
+    echo "PHP Version   : " . PHP_VERSION . "\n";
+    exit;
+}
 
 /* ============ Sabitler ============ */
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
@@ -512,21 +519,8 @@ function handle_live(): void {
     $d0 = decomp($tl, $start);
     $dseq = $d0['c'] * count($tl['slots']) + $d0['s'] + ($d0['j'] > 0 ? 1 : 0);
 
-    $baseUrl = strtok($_SERVER['REQUEST_URI'], '?');
-    $wrap = function (string $u) use ($cfg, $baseUrl): string {
-        if (!$cfg['proxy']) return $u;
-        return $baseUrl . '?u=' . b64u($u) . '&s=' . sign_url($cfg['secret'], $u);
-    };
-    $wrapLine = function (string $line) use ($wrap): string {
-        if (!preg_match('/URI="([^"]*)"/', $line, $m)) return $line;
-        $w = $wrap($m[1]);
-        return str_replace($m[0], 'URI="' . $w . '"', $line);
-    };
-
-    // /seg yolu bu dosyaya göre
-    $segPath = strtok($_SERVER['REQUEST_URI'], '?');
-    $segPath = rtrim(str_replace('/live.m3u8', '/seg', $segPath), '/');
-    if (!str_ends_with($segPath, '/seg')) $segPath .= '/seg';
+    // /seg yolu bu dosyaya göre hesapla (script dizini + baba120.php + /seg)
+    $segPath = $GLOBALS['__SCRIPT_URL'] . '/seg';
 
     $wrap = function (string $u) use ($cfg, $segPath): string {
         if (!$cfg['proxy']) return $u;
@@ -653,17 +647,17 @@ function handle_manifest(): void {
     $name = $cfg['name'] ?: 'baba120 TV';
     $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
     $host = $_SERVER['HTTP_HOST'];
-    $base = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\');
-    $origin = $scheme . '://' . $host . $base;
+    $scriptUrl = $GLOBALS['__SCRIPT_URL'];
+    $origin = $scheme . '://' . $host . $scriptUrl;
     $icon = '';
     if (!empty($cfg['logo']['url'])) {
-        $icon = str_starts_with($cfg['logo']['url'], '/') ? $origin . $cfg['logo']['url'] : $cfg['logo']['url'];
+        $icon = str_starts_with($cfg['logo']['url'], '/') ? $scheme . '://' . $host . $cfg['logo']['url'] : $cfg['logo']['url'];
     }
     $m = [
         'name' => $name,
         'short_name' => mb_substr($name, 0, 12),
-        'start_url' => $base . '/live.m3u8',
-        'scope' => $base . '/',
+        'start_url' => $scriptUrl . '/live.m3u8',
+        'scope' => $scriptUrl . '/',
         'display' => 'fullscreen',
         'display_override' => ['fullscreen', 'standalone'],
         'orientation' => 'landscape',
@@ -863,7 +857,6 @@ function handle_api(string $path): void {
                 unset($t);
             }
             KV::save_items($items);
-            // Artık kullanılmayan logoları sil
             $used = [];
             foreach ($items as $i) { $a = asset_of($i['logo'] ?? null); if ($a) $used[$a] = 1; }
             foreach (array_unique($old) as $id) if (!isset($used[$id])) KV::delete('ilogo:' . $id);
@@ -1037,14 +1030,12 @@ function handle_api(string $path): void {
             return;
         }
 
-        // out-save / out-start / out-stop / pump: bu sürümde RTMP gönderici yok
         case '/api/out-save':
         case '/api/out-start':
         case '/api/out-stop':
             send_json(['error' => 'Bu PHP sürümünde RTMP/YouTube gönderici yok. Sunucuda ffmpeg ile gönderin.'], 501);
             return;
         case '/api/pump':
-            // Boş yanıt: panel bunu bekliyor, hata vermesin
             send_text('');
             return;
     }
@@ -1118,7 +1109,6 @@ const PLAYER_HTML = <<<'HTML'
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#000000">
-<link rel="manifest" href="manifest.webmanifest">
 <title>Canlı Yayın</title>
 <style>
 html,body{margin:0;height:100%;background:#000;color:#fff;font-family:system-ui,sans-serif;overflow:hidden}
@@ -1150,10 +1140,12 @@ video{width:100%;height:100%;background:#000;object-fit:cover}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
 <script>
 var v=document.getElementById('v'),w=document.getElementById('w'),lg=document.getElementById('lg'),tt=document.getElementById('t'),info=document.getElementById('info'),er=document.getElementById('er');
-var src='live.m3u8?raw=1';
-var h=null,lastLogo='',N=null,t0=0;
+var base=location.pathname.replace(/\/[^\/]*$/,'');
+var src=base+'/live.m3u8?raw=1';
+var apiNow=base+'/api/now';
 function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function errMsg(m){er.textContent=m;er.style.display=m?'block':'none'}
+var h=null,lastLogo='',N=null;
 function start(){
   if(h){try{h.destroy()}catch(e){}h=null;}
   if(window.Hls&&Hls.isSupported()){
@@ -1226,7 +1218,7 @@ function ready(fn){
   var s=document.createElement('script');
   s.src='https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js';
   s.onload=fn;
-  s.onerror=function(){errMsg('Oynatıcı kütüphanesi yüklenemedi (internet / reklam engelleyici?)')};
+  s.onerror=function(){errMsg('Oynatıcı kütüphanesi yüklenemedi')};
   document.head.appendChild(s);
 }
 var lgS=null;
@@ -1235,7 +1227,7 @@ function applyLogo(l){
   if(s===lastLogo)return;lastLogo=s;
   lgS=l;
   if(l&&l.on&&l.url){
-    lg.src=(l.url.startsWith('/')?l.url.slice(1):l.url);
+    lg.src=l.url.startsWith('/')?(base+l.url):l.url;
   }
   placeLogo();
 }
@@ -1287,8 +1279,8 @@ function drawInfo(){
   placeLogo();
 }
 function now(){
-  fetch('api/now').then(function(r){return r.json()}).then(function(j){
-    N=j;t0=Date.now();
+  fetch(apiNow).then(function(r){return r.json()}).then(function(j){
+    N=j;
     if(j.name)document.title=j.name;
     applyLogo(j.logo);drawInfo();
   }).catch(function(){});
@@ -1362,6 +1354,7 @@ code{background:#0f1115;padding:2px 6px;border-radius:6px;word-break:break-all}
 <div id="app"></div>
 <div id="modal"></div>
 <script>
+var BASE=location.pathname.replace(/\/[^\/]*$/,'');
 var KEY=localStorage.getItem('b120key')||'';
 var S=null,filled=false,V='';
 var L={on:false,url:'',x:2,y:4,size:12,opacity:100};
@@ -1377,7 +1370,8 @@ function hm2(sec){sec=((Math.round(sec)%86400)+86400)%86400;return pad(Math.floo
 function toast(t){var e=$('toast');if(!e)return;e.textContent=t;e.style.display='block';clearTimeout(window.__to);window.__to=setTimeout(function(){e.style.display='none'},3500)}
 function setMsg(t){var m=$('msg');if(m)m.textContent=t||''}
 function api(path,method,body){
-  return fetch(path,{method:method||'GET',headers:{'Content-Type':'application/json','X-Admin-Key':KEY},body:body?JSON.stringify(body):undefined})
+  var u=(path.charAt(0)==='/'?BASE+path:BASE+'/'+path);
+  return fetch(u,{method:method||'GET',headers:{'Content-Type':'application/json','X-Admin-Key':KEY},body:body?JSON.stringify(body):undefined})
   .then(function(r){return r.json().then(function(j){
     if(r.status===401){KEY='';localStorage.removeItem('b120key');init();throw new Error('Yetkisiz');}
     if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
@@ -1386,10 +1380,10 @@ function api(path,method,body){
 }
 function init(){
   clearInterval(window.__t);clearInterval(window.__p);
-  fetch('api/status').then(function(r){return r.json()}).then(function(s){
+  fetch(BASE+'/api/status').then(function(r){return r.json()}).then(function(s){
     if(s.error){$('app').innerHTML='<div class="card">'+esc(s.error)+'</div>';return;}
     if(!s.hasKey)setup();else if(!KEY)login();else{
-      api('api/state').then(function(){panel()}).catch(function(){});
+      api('/api/state').then(function(){panel()}).catch(function(){});
     }
   }).catch(function(e){$('app').innerHTML='<div class="card">Hata: '+esc(e.message)+'</div>'});
 }
@@ -1398,7 +1392,7 @@ function setup(){
 }
 function doSetup(){
   var k=$('k').value;
-  fetch('api/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})})
+  fetch(BASE+'/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})})
   .then(function(r){return r.json()}).then(function(j){
     if(j.error){setMsg(j.error);return;}
     KEY=k;localStorage.setItem('b120key',k);panel();
@@ -1409,7 +1403,7 @@ function login(){
 }
 function doLogin(){
   KEY=$('k').value;
-  api('api/state').then(function(){localStorage.setItem('b120key',KEY);panel()}).catch(function(){setMsg('Anahtar hatalı')});
+  api('/api/state').then(function(){localStorage.setItem('b120key',KEY);panel()}).catch(function(){setMsg('Anahtar hatalı')});
 }
 function logout(){KEY='';localStorage.removeItem('b120key');init()}
 
@@ -1422,13 +1416,13 @@ function gridBtns(fn){
 function panel(){
   filled=false;
   $('app').innerHTML=
-  '<div class="bar"><h1>baba120 Yayın Paneli</h1><span><a href="live.m3u8" target="_blank">Yayını Aç</a> <button class="b2" onclick="logout()">Çıkış</button></span></div>'
+  '<div class="bar"><h1>baba120 Yayın Paneli</h1><span><a href="'+BASE+'/live.m3u8" target="_blank">Yayını Aç</a> <button class="b2" onclick="logout()">Çıkış</button></span></div>'
   +'<div class="card" id="st"></div>'
 
   +'<div class="card"><h2>Film / Dizi Listesi Ekle</h2>'
-  +'<input type="text" id="lu" placeholder="Liste adresi (.m3u) — içindeki yayınlar listelenir">'
+  +'<input type="text" id="lu" placeholder="Liste adresi (.m3u)">'
   +'<div style="margin-top:8px"><button onclick="importList()">Listeyi Oku</button></div>'
-  +'<label>Veya tek tek / yapıştır (her satıra bir adres, ya da liste içeriği)</label>'
+  +'<label>Veya tek tek / yapıştır</label>'
   +'<textarea id="ta" placeholder="Film Adı | https://site.com/film.m3u8"></textarea>'
   +'<button class="b2" onclick="addItems()">Satırları Ekle</button>'
   +'<div id="msg"></div></div>'
@@ -1440,7 +1434,7 @@ function panel(){
   +'<div id="pl" style="max-height:380px;overflow:auto"></div></div>'
 
   +'<div class="card"><h2>Yayın Sırası ve Saatleri</h2>'
-  +'<div class="s" style="margin-bottom:6px">Bir yayının yanındaki saat kutusunu doldurursan o yayın her gün o saatte oynar. Saati boş olanlar aradaki boşlukları sırayla doldurur. Her bölüme ayrı logo ekleyebilirsin; logosu olmayan bölümlerde genel logo görünür.</div>'
+  +'<div class="s" style="margin-bottom:6px">Saat verirsen o yayın her gün o saatte oynar. Boş olanlar aradaki boşlukları doldurur.</div>'
   +'<div class="bulk"><span class="s" id="scnt"></span><div>'
   +'<button class="b2" onclick="selAll(true)">Tümünü Seç</button>'
   +'<button class="b2" onclick="selAll(false)">Seçimi Kaldır</button>'
@@ -1450,22 +1444,14 @@ function panel(){
   +'<div id="lst"></div>'
   +'<div style="margin-top:10px"><button class="red" onclick="clearAll()">Listeyi Temizle</button></div></div>'
 
-  +'<div class="card" id="prgc" style="display:none"><h2>Günlük Program (her gün tekrar)</h2><div id="prg"></div></div>'
+  +'<div class="card" id="prgc" style="display:none"><h2>Günlük Program</h2><div id="prg"></div></div>'
 
-  +'<div class="card"><h2>Genel Logo</h2><div class="s">Konum, boyut ve saydamlık otomatik kaydedilir; tarayıcıda filmin üzerinde aynı yerde görünür. Özel logosu olmayan tüm bölümlerde bu logo kullanılır.</div>'
+  +'<div class="card"><h2>Genel Logo</h2>'
   +'<label style="display:inline-block"><input type="checkbox" id="lon" onchange="lchg()"> Logoyu göster</label>'
   +'<div id="pv"><img id="pvl" alt=""><span id="pvt">Logo yok</span></div>'
   +'<input type="text" id="lurl" placeholder="Logo adresi (https://...png)" oninput="lchg()">'
   +'<div style="margin-top:6px"><button class="b2" onclick="limport()">Adresten Al</button></div>'
   +'<label>Veya dosyadan yükle</label><input type="file" id="lf" accept="image/*" onchange="lup(this)">'
-
-  +'<label>Arka planı temizle</label>'
-  +'<div class="ctl"><label style="display:inline-block;margin:0"><input type="checkbox" id="bga" checked onchange="bgchg()"> Otomatik (köşe rengi)</label>'
-  +'<span>Renk: <input type="color" id="bgc" value="#ffffff" onchange="bgchg()"></span></div>'
-  +'<label>Tolerans: <span id="bgtv">15</span></label><input type="range" id="bgt" min="1" max="100" value="15" oninput="bgchg()">'
-  +'<label style="display:inline-block"><input type="checkbox" id="bge" checked onchange="bgchg()"> Sadece kenardan sil (logonun içindeki renkler kalsın)</label>'
-  +'<div><button class="b2" onclick="bgchg()">Önizle</button><button class="green" onclick="bgSave()">Temizlenmiş Logoyu Kaydet</button><button class="b2" onclick="bgReset()">Orijinali Geri Yükle</button></div>'
-
   +'<label>Konum (hazır)</label><div class="grid3" id="lgrid"></div>'
   +'<label>İnce ayar</label><div class="ctl"><span>'
   +'<button class="b2" onclick="lnudge(-1,0)">&larr;</button><button class="b2" onclick="lnudge(0,-1)">&uarr;</button>'
@@ -1475,8 +1461,8 @@ function panel(){
   +'<label>Saydamlık: <span id="lopv"></span></label><input type="range" id="lop" min="10" max="100" oninput="lchg()">'
   +'<div style="margin-top:10px"><button class="green" onclick="saveLogo()">Logoyu Kaydet</button></div></div>'
 
-  +'<div class="card"><h2>Gerçekten sınırsız yayın (PC / VPS)</h2>'
-  +'<div class="s">Bu PHP sürümünde RTMP gönderici yoktur. Sunucuda ffmpeg ile gönderim yapabilirsin. Aşağıdaki komut YouTube anahtarını yazınca güncellenir (RTMP gerekir).</div>'
+  +'<div class="card"><h2>ffmpeg Komutu (Sunucuda 7/24 yayın)</h2>'
+  +'<div class="s">Bu PHP sürümünde RTMP gönderici yoktur. Sunucuda/PC\\'de ffmpeg ile yayın yapmak için aşağıdaki komutu kullan.</div>'
   +'<label>YouTube yayın anahtarı</label>'
   +'<input type="text" id="ytk" placeholder="YouTube yayın anahtarı" autocomplete="off" oninput="drawFf()">'
   +'<textarea id="ffc" readonly style="min-height:110px"></textarea>'
@@ -1484,8 +1470,8 @@ function panel(){
 
   +'<div class="card"><h2>Ayarlar</h2>'
   +'<label>Kanal adı</label><input type="text" id="cn" placeholder="baba120 TV">'
-  +'<label style="display:inline-block;margin-top:12px"><input type="checkbox" id="spx"> Segmentleri worker üzerinden ver</label><br>'
-  +'<label style="display:inline-block"><input type="checkbox" id="sinf"> Tarayıcıda film/dizi adı ve bölümü göster</label>'
+  +'<label style="display:inline-block;margin-top:12px"><input type="checkbox" id="spx"> Segmentleri proxy üzerinden ver</label><br>'
+  +'<label style="display:inline-block"><input type="checkbox" id="sinf"> Film/dizi adı ve bölümü göster</label>'
   +'<div style="margin-top:10px"><button class="green" onclick="saveKeys()">Ayarları Kaydet</button></div></div>';
 
   $('lgrid').innerHTML=gridBtns('lpos');
@@ -1494,7 +1480,7 @@ function panel(){
   window.__t=setInterval(load,5000);
 }
 function load(){
-  api('api/state').then(function(s){
+  api('/api/state').then(function(s){
     S=s;
     if(!filled){filled=true;fillSettings();}
     drawStatus();drawList();drawProgram();
@@ -1508,15 +1494,15 @@ function fillSettings(){
   $('sinf').checked=S.showInfo!==false;
   drawFf();
   var tz=-new Date().getTimezoneOffset();
-  if(S.tz!==tz){api('api/settings','POST',{tz:tz}).catch(function(){});}
+  if(S.tz!==tz){api('/api/settings','POST',{tz:tz}).catch(function(){});}
   drawLogo();
 }
-function liveUrl(){return new URL('live.m3u8',location.href).href}
+function liveUrl(){return location.origin+BASE+'/live.m3u8'}
 function drawStatus(){
   var h='',n=S.now;
   if(S.running){
-    h+='<div class="banner live"><span class="dot"></span>YAYIN BAŞLADI — YAYINDA<div class="s" style="color:#86efac;font-weight:400">'
-    +(S.mode==='day'?'Saatli günlük program':'Sıralı döngü')+' &bull; Başlatıldı: '+esc(new Date(S.startAt).toLocaleString('tr-TR'))+'</div>'
+    h+='<div class="banner live"><span class="dot"></span>YAYINDA<div class="s" style="color:#86efac;font-weight:400">'
+    +(S.mode==='day'?'Saatli günlük program':'Sıralı döngü')+' &bull; '+esc(new Date(S.startAt).toLocaleString('tr-TR'))+'</div>'
     +(V?'<div style="font-weight:400;margin-top:4px">'+esc(V)+'</div>':'')+'</div>';
   }else{
     h+='<div class="banner stop">YAYIN KAPALI</div>';
@@ -1544,24 +1530,24 @@ function drawStatus(){
 function toggleLive(){
   if(S.running){
     if(!confirm('Yayın durdurulsun mu?'))return;
-    api('api/stop','POST').then(function(){V='';toast('Yayın durduruldu');load()}).catch(function(e){setMsg(e.message)});
+    api('/api/stop','POST').then(function(){V='';toast('Durduruldu');load()}).catch(function(e){setMsg(e.message)});
   }else{
-    api('api/start','POST').then(function(){toast('Yayın başladı ✓');V='Kontrol ediliyor...';load();verify()}).catch(function(e){toast(e.message)});
+    api('/api/start','POST').then(function(){toast('Başladı ✓');V='Kontrol ediliyor...';load();verify()}).catch(function(e){toast(e.message)});
   }
 }
 function restartLive(){
-  if(!confirm('Yayın ilk yayından yeniden başlasın mı?'))return;
-  api('api/start','POST').then(function(){toast('Yayın baştan başladı ✓');V='Kontrol ediliyor...';load();verify()}).catch(function(e){toast(e.message)});
+  if(!confirm('Yayın baştan başlasın mı?'))return;
+  api('/api/start','POST').then(function(){toast('Baştan başladı ✓');V='Kontrol ediliyor...';load();verify()}).catch(function(e){toast(e.message)});
 }
 function verify(){
   setTimeout(function(){
     fetch(liveUrl()+'?raw=1',{cache:'no-store'}).then(function(r){return r.text().then(function(t){
-      V=(r.ok&&t.indexOf('#EXTM3U')===0)?'✓ Yayın çalışıyor (playlist hazır)':('⚠ Yayın hatası: '+t.slice(0,80));
+      V=(r.ok&&t.indexOf('#EXTM3U')===0)?'✓ Yayın çalışıyor':('⚠ Hata: '+t.slice(0,80));
       drawStatus();
-    })}).catch(function(){V='⚠ Yayın adresine ulaşılamadı';drawStatus();});
+    })}).catch(function(){V='⚠ Ulaşılamadı';drawStatus();});
   },1200);
 }
-function setLoop(v){api('api/loop','POST',{loop:v}).then(load)}
+function setLoop(v){api('/api/loop','POST',{loop:v}).then(load)}
 function copyTxt(t){navigator.clipboard.writeText(t);toast('Kopyalandı')}
 function ffcmd(){
   var k=($('ytk')&&$('ytk').value.trim())||'YAYIN_ANAHTARI';
@@ -1580,17 +1566,17 @@ function selTog(id,v){SEL[id]=v;drawList()}
 function selAll(flag){S.items.forEach(function(i){SEL[i.id]=flag});drawList();}
 function delSel(){
   var ids=selIds();
-  if(!ids.length){toast('Hiç yayın seçilmedi');return;}
+  if(!ids.length){toast('Hiç seçilmedi');return;}
   if(!confirm(ids.length+' yayın silinsin mi?'))return;
-  api('api/remove-many','POST',{ids:ids}).then(function(r){SEL={};toast(r.removed+' yayın silindi');load()}).catch(function(e){toast(e.message)});
+  api('/api/remove-many','POST',{ids:ids}).then(function(r){SEL={};toast(r.removed+' silindi');load()}).catch(function(e){toast(e.message)});
 }
 function logoSel(){openLogo(selIds())}
 function logoOne(id){openLogo([id])}
 function logoClearSel(){
   var ids=selIds();
-  if(!ids.length){toast('Hiç yayın seçilmedi');return;}
-  if(!confirm(ids.length+' yayının özel logosu kaldırılsın mı?'))return;
-  api('api/item-logo','POST',{ids:ids,logo:null}).then(function(){toast('Logolar kaldırıldı');load()}).catch(function(e){toast(e.message)});
+  if(!ids.length){toast('Hiç seçilmedi');return;}
+  if(!confirm(ids.length+' yayının logosu kaldırılsın mı?'))return;
+  api('/api/item-logo','POST',{ids:ids,logo:null}).then(function(){toast('Kaldırıldı');load()}).catch(function(e){toast(e.message)});
 }
 function drawList(){
   if(!S.items.length){$('lst').innerHTML='<div class="s">Liste boş.</div>';updSel();return;}
@@ -1629,11 +1615,11 @@ function drawProgram(){
   });
   $('prg').innerHTML=h||'<div class="s">Program yok</div>';
 }
-function setAt(id,val){api('api/at','POST',{id:id,at:val}).then(function(){toast(val?'Saat kaydedildi ✓':'Saat kaldırıldı');load()}).catch(function(e){toast(e.message)})}
-function mv(id,dir){api('api/move','POST',{id:id,dir:dir}).then(load)}
-function rm(id){if(confirm('Silinsin mi?'))api('api/remove','POST',{id:id}).then(function(){delete SEL[id];load()})}
-function rf(id){setMsg('Yenileniyor...');api('api/refresh','POST',{id:id}).then(function(){setMsg('Süre yenilendi');load()}).catch(function(e){setMsg(e.message)})}
-function clearAll(){if(confirm('TÜM liste silinsin mi? Yayın da durur.'))api('api/clear','POST').then(function(){SEL={};toast('Liste temizlendi');load()})}
+function setAt(id,val){api('/api/at','POST',{id:id,at:val}).then(function(){toast(val?'Kaydedildi':'Kaldırıldı');load()}).catch(function(e){toast(e.message)})}
+function mv(id,dir){api('/api/move','POST',{id:id,dir:dir}).then(load)}
+function rm(id){if(confirm('Silinsin mi?'))api('/api/remove','POST',{id:id}).then(function(){delete SEL[id];load()})}
+function rf(id){setMsg('Yenileniyor...');api('/api/refresh','POST',{id:id}).then(function(){setMsg('Süre yenilendi');load()}).catch(function(e){setMsg(e.message)})}
+function clearAll(){if(confirm('TÜM liste silinsin mi?'))api('/api/clear','POST').then(function(){SEL={};toast('Temizlendi');load()})}
 
 var EID='';
 function closeModal(){$('modal').innerHTML=''}
@@ -1644,7 +1630,7 @@ function openEdit(id){
   $('modal').innerHTML='<div class="mback"><div class="mbox"><h2>Yayını Düzenle</h2>'
   +'<label>Ad</label><input type="text" id="etitle">'
   +'<label>Kaynak adresi (m3u8)</label><input type="text" id="eurl">'
-  +'<label>Oynama saati (boş = sıralı akış)</label><input type="time" id="eat">'
+  +'<label>Oynama saati</label><input type="time" id="eat">'
   +'<div style="margin-top:12px"><button class="green" onclick="saveEdit()">Kaydet</button><button class="b2" onclick="closeModal()">İptal</button></div>'
   +'<div id="emsg" class="s" style="margin-top:8px;color:#fbbf24"></div></div></div>';
   $('etitle').value=it.title;
@@ -1653,14 +1639,14 @@ function openEdit(id){
 }
 function saveEdit(){
   $('emsg').textContent='Kaydediliyor...';
-  api('api/edit','POST',{id:EID,title:$('etitle').value,url:$('eurl').value,at:$('eat').value})
+  api('/api/edit','POST',{id:EID,title:$('etitle').value,url:$('eurl').value,at:$('eat').value})
   .then(function(){closeModal();toast('Kaydedildi ✓');load()})
   .catch(function(e){$('emsg').textContent=e.message});
 }
 
 var ML=null,MDATA=null,MIDS=[];
 function openLogo(ids){
-  if(!ids.length){toast('Hiç yayın seçilmedi');return;}
+  if(!ids.length){toast('Hiç seçilmedi');return;}
   MIDS=ids;MDATA=null;
   var first=null;
   S.items.forEach(function(i){if(!first&&i.id===ids[0])first=i});
@@ -1670,9 +1656,9 @@ function openLogo(ids){
   $('modal').innerHTML='<div class="mback"><div class="mbox"><h2>Logo ekle ('+ids.length+' yayın)</h2>'
   +'<label style="display:inline-block"><input type="checkbox" id="mon" onchange="mchg()"> Logoyu göster</label>'
   +'<div id="mpv"><img id="mpl" alt=""><span id="mpt">Logo yok</span></div>'
-  +'<input type="text" id="murl" placeholder="Logo adresi (https://...png)" oninput="MDATA=null;mchg()">'
+  +'<input type="text" id="murl" placeholder="Logo adresi" oninput="MDATA=null;mchg()">'
   +'<label>Veya dosyadan yükle</label><input type="file" id="mf" accept="image/*" onchange="mup(this)">'
-  +'<label>Konum (hazır)</label><div class="grid3">'+gridBtns('mpos')+'</div>'
+  +'<label>Konum</label><div class="grid3">'+gridBtns('mpos')+'</div>'
   +'<div class="s" id="mxy"></div>'
   +'<label>Boyut: <span id="mszv"></span></label><input type="range" id="msz" min="3" max="60" oninput="mchg()">'
   +'<label>Saydamlık: <span id="mopv"></span></label><input type="range" id="mop" min="10" max="100" oninput="mchg()">'
@@ -1732,29 +1718,29 @@ function mup(inp){
 function msave(){
   if(!MDATA&&!ML.url){$('mmsg').textContent='Logo adresi girin veya dosya yükleyin';return;}
   $('mmsg').textContent='Kaydediliyor...';
-  api('api/item-logo','POST',{ids:MIDS,logo:ML,data:MDATA}).then(function(){
-    closeModal();toast('Logo kaydedildi ✓');load();
+  api('/api/item-logo','POST',{ids:MIDS,logo:ML,data:MDATA}).then(function(){
+    closeModal();toast('Kaydedildi ✓');load();
   }).catch(function(e){$('mmsg').textContent=e.message});
 }
 function mrem(){
-  api('api/item-logo','POST',{ids:MIDS,logo:null}).then(function(){
-    closeModal();toast('Özel logo kaldırıldı');load();
+  api('/api/item-logo','POST',{ids:MIDS,logo:null}).then(function(){
+    closeModal();toast('Kaldırıldı');load();
   }).catch(function(e){$('mmsg').textContent=e.message});
 }
 
 function importList(){
   var u=$('lu').value.trim();
   if(!u){setMsg('Liste adresini girin');return;}
-  setMsg('Liste okunuyor...');
-  api('api/import','POST',{url:u}).then(function(r){showPend(r.entries,r.duplicate||0)}).catch(function(e){setMsg(e.message)});
+  setMsg('Okunuyor...');
+  api('/api/import','POST',{url:u}).then(function(r){showPend(r.entries,r.duplicate||0)}).catch(function(e){setMsg(e.message)});
 }
 function addItems(){
   var nl=String.fromCharCode(10);
   var raw=$('ta').value;
   if(!raw.trim()){setMsg('Adres veya liste girin');return;}
   if(raw.indexOf('#EXTINF')>=0){
-    setMsg('Liste okunuyor...');
-    api('api/import','POST',{text:raw}).then(function(r){showPend(r.entries,r.duplicate||0);$('ta').value=''}).catch(function(e){setMsg(e.message)});
+    setMsg('Okunuyor...');
+    api('/api/import','POST',{text:raw}).then(function(r){showPend(r.entries,r.duplicate||0);$('ta').value=''}).catch(function(e){setMsg(e.message)});
     return;
   }
   var entries=[];
@@ -1771,7 +1757,7 @@ function showPend(entries,dup){
   PEND=entries;PSEL={};
   $('pvc').style.display='block';
   $('pf').value='';
-  setMsg(entries.length+' yayın bulundu'+(dup?(', '+dup+' zaten listede'):'')+'. Aşağıdan seçip ekleyin.');
+  setMsg(entries.length+' yayın bulundu'+(dup?(', '+dup+' zaten listede'):''));
   drawPend();
   $('pvc').scrollIntoView({behavior:'smooth'});
 }
@@ -1805,20 +1791,20 @@ function addPendAll(){
 function addPendSel(){
   var l=[];
   PEND.forEach(function(e,i){if(PSEL[i])l.push({title:e.title,url:e.url})});
-  if(!l.length){toast('Hiç yayın seçilmedi');return;}
+  if(!l.length){toast('Hiç seçilmedi');return;}
   pendClose();runBatch(l,0);
 }
 function runBatch(entries,dup){
   var nl=String.fromCharCode(10),ok=0,bad=[],i=0,total=entries.length;
-  if(!total){setMsg('Eklenecek yeni yayın yok'+(dup?(' ('+dup+' zaten listede)'):''));return;}
+  if(!total){setMsg('Eklenecek yok'+(dup?(' ('+dup+' zaten listede)'):''));return;}
   function step(){
     if(i>=total){
-      setMsg('Bitti: '+ok+' eklendi, '+bad.length+' atlandı'+(dup?(', '+dup+' zaten vardı'):'')+(bad.length?(nl+bad.slice(0,15).join(nl)):''));
+      setMsg('Bitti: '+ok+' eklendi, '+bad.length+' atlandı'+(bad.length?(nl+bad.slice(0,15).join(nl)):''));
       toast(ok+' yayın eklendi');load();return;
     }
     var chunk=entries.slice(i,i+3);i+=3;
     setMsg('Ekleniyor '+Math.min(i,total)+'/'+total+' — eklenen: '+ok+', atlanan: '+bad.length+nl+'(Bu sayfayı kapatmayın)');
-    api('api/add-batch','POST',{entries:chunk}).then(function(r){
+    api('/api/add-batch','POST',{entries:chunk}).then(function(r){
       r.results.forEach(function(x){if(x.ok)ok++;else bad.push(x.error+' -> '+x.url)});
       step();
     }).catch(function(e){
@@ -1837,7 +1823,7 @@ function fillLogoInputs(){
 }
 function autoSave(){
   clearTimeout(window.__as);
-  window.__as=setTimeout(function(){api('api/settings','POST',{logo:L}).then(function(){toast('Logo kaydedildi ✓')}).catch(function(){})},800);
+  window.__as=setTimeout(function(){api('/api/settings','POST',{logo:L}).then(function(){toast('Logo kaydedildi ✓')}).catch(function(){})},800);
 }
 function lchg(){
   L.on=$('lon').checked;
@@ -1866,17 +1852,17 @@ function drawLogo(){
   $('lxy').textContent='Yatay: '+L.x+'%  Dikey: '+L.y+'%';
 }
 function saveLogo(){
-  api('api/settings','POST',{logo:L}).then(function(){toast('Logo kaydedildi ✓')}).catch(function(e){toast(e.message)});
+  api('/api/settings','POST',{logo:L}).then(function(){toast('Kaydedildi ✓')}).catch(function(e){toast(e.message)});
 }
 function logoNew(r){
   L.url=r.url;L.on=true;OR=null;PVSRC='';BGC=null;
   fillLogoInputs();drawLogo();
-  api('api/settings','POST',{logo:L});
+  api('/api/settings','POST',{logo:L});
 }
 function limport(){
   var u=$('lurl').value.trim();
   if(!/^https?:/i.test(u)){toast('Önce logo adresini yazın');return;}
-  api('api/logo-import','POST',{url:u}).then(function(r){logoNew(r);toast('Logo alındı ✓')}).catch(function(e){toast(e.message)});
+  api('/api/logo-import','POST',{url:u}).then(function(r){logoNew(r);toast('Alındı ✓')}).catch(function(e){toast(e.message)});
 }
 function lup(inp){
   var f=inp.files[0];if(!f)return;
@@ -1888,102 +1874,58 @@ function lup(inp){
       var c=document.createElement('canvas');
       c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);
       c.getContext('2d').drawImage(im,0,0,c.width,c.height);
-      api('api/logo-upload','POST',{data:c.toDataURL('image/png'),orig:true}).then(function(r){logoNew(r);toast('Logo yüklendi ✓')}).catch(function(e){toast(e.message)});
+      api('/api/logo-upload','POST',{data:c.toDataURL('image/png'),orig:true}).then(function(r){logoNew(r);toast('Yüklendi ✓')}).catch(function(e){toast(e.message)});
     };
     im.src=fr.result;
   };
   fr.readAsDataURL(f);
 }
 
-function loadOrig(cb){
-  if(OR){cb();return;}
-  var im=new Image();
-  im.onload=function(){OR=im;cb()};
-  im.onerror=function(){toast('Önce logoyu yükleyin veya adresten alın')};
-  im.src='logo?orig=1&t='+Date.now();
-}
-function cleanBg(){
-  var W=OR.naturalWidth,H=OR.naturalHeight;
-  var c=document.createElement('canvas');c.width=W;c.height=H;
-  var x=c.getContext('2d');x.drawImage(OR,0,0);
-  var im=x.getImageData(0,0,W,H),d=im.data;
-  var rgb;
-  if($('bga').checked){rgb=[d[0],d[1],d[2]];}
-  else{var hx=$('bgc').value;rgb=[parseInt(hx.substr(1,2),16),parseInt(hx.substr(3,2),16),parseInt(hx.substr(5,2),16)];}
-  var T=parseFloat($('bgt').value)*4.41;
-  function match(p){
-    if(d[p+3]===0)return true;
-    var a=d[p]-rgb[0],b=d[p+1]-rgb[1],e=d[p+2]-rgb[2];
-    return Math.sqrt(a*a+b*b+e*e)<=T;
-  }
-  if(!$('bge').checked){
-    for(var i=0;i<d.length;i+=4){if(match(i))d[i+3]=0;}
-  }else{
-    var seen=new Uint8Array(W*H),stack=new Int32Array(W*H),sp=0,q;
-    function push(px,py){
-      if(px<0||py<0||px>=W||py>=H)return;
-      q=py*W+px;
-      if(seen[q])return;
-      if(!match(q*4))return;
-      seen[q]=1;stack[sp++]=q;
-    }
-    for(var a1=0;a1<W;a1++){push(a1,0);push(a1,H-1);}
-    for(var b1=0;b1<H;b1++){push(0,b1);push(W-1,b1);}
-    while(sp>0){
-      q=stack[--sp];
-      d[q*4+3]=0;
-      var px=q%W,py=(q-px)/W;
-      push(px+1,py);push(px-1,py);push(px,py+1);push(px,py-1);
-    }
-  }
-  x.putImageData(im,0,0);
-  return c;
-}
-function bgchg(){
-  $('bgtv').textContent=$('bgt').value;
-  loadOrig(function(){
-    BGC=cleanBg();
-    PVSRC=BGC.toDataURL('image/png');
-    drawLogo();
-  });
-}
-function bgSave(){
-  if(!BGC){toast('Önce "Önizle" ile temizleyin');return;}
-  api('api/logo-upload','POST',{data:BGC.toDataURL('image/png'),orig:false}).then(function(r){
-    L.url=r.url;L.on=true;PVSRC='';BGC=null;fillLogoInputs();drawLogo();
-    api('api/settings','POST',{logo:L});
-    toast('Temizlenmiş logo kaydedildi ✓');
-  }).catch(function(e){toast(e.message)});
-}
-function bgReset(){
-  api('api/logo-restore','POST').then(function(r){
-    L.url=r.url;PVSRC='';BGC=null;fillLogoInputs();drawLogo();
-    api('api/settings','POST',{logo:L});
-    toast('Orijinal logo geri yüklendi');
-  }).catch(function(e){toast(e.message)});
-}
-
 function saveKeys(){
-  api('api/settings','POST',{
+  api('/api/settings','POST',{
     name:$('cn').value,proxy:$('spx').checked,showInfo:$('sinf').checked
   }).then(function(){
-    toast('Ayarlar kaydedildi ✓');load();
+    toast('Kaydedildi ✓');load();
   }).catch(function(e){toast(e.message)});
 }
 init();
 </script></body></html>
 HTML;
 
-/* ============ Router ============ */
-$__path = rtrim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?: '/', '/');
-$__scriptDir = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\');
-$__scriptBase = basename($_SERVER['SCRIPT_NAME']);
-// İstek yolundan script adını ve dizinini çıkar
-$__rel = $__path;
-if ($__scriptDir && str_starts_with($__rel, $__scriptDir)) $__rel = substr($__rel, strlen($__scriptDir));
-$__rel = '/' . ltrim($__rel, '/');
-if (str_starts_with($__rel, '/' . $__scriptBase)) $__rel = substr($__rel, strlen($__scriptBase));
-if ($__rel === '' || $__rel === '/') $__rel = '/';
+/* ============ Router — DÜZELTİLDİ ============ */
+// Öncelik sırası:
+//   1) ?p=/admin        (her hostingde kesin çalışır)
+//   2) PATH_INFO        (Apache/nginx izin verirse)
+//   3) REQUEST_URI'den baba120.php sonrasını kes
+
+$__scriptBase = basename($_SERVER['SCRIPT_NAME']);           // baba120.php
+$__scriptDir  = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\'); // /m3u
+
+// Script'in tam URL yolu (tarayıcıdan erişilebilir): /m3u/baba120.php
+$__scriptUrl = ($__scriptDir === '' || $__scriptDir === '/' ? '' : $__scriptDir) . '/' . $__scriptBase;
+if ($__scriptUrl[0] !== '/') $__scriptUrl = '/' . $__scriptUrl;
+$GLOBALS['__SCRIPT_URL'] = $__scriptUrl;
+
+// Yolu hesapla
+if (isset($_GET['p'])) {
+    $__rel = '/' . ltrim((string)$_GET['p'], '/');
+} elseif (!empty($_SERVER['PATH_INFO'])) {
+    $__rel = '/' . ltrim($_SERVER['PATH_INFO'], '/');
+} elseif (!empty($_SERVER['ORIG_PATH_INFO'])) {
+    $__rel = '/' . ltrim($_SERVER['ORIG_PATH_INFO'], '/');
+} else {
+    $__path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?: '/';
+    $pos = strpos($__path, $__scriptBase);
+    if ($pos !== false) {
+        $__rel = substr($__path, $pos + strlen($__scriptBase));
+    } else {
+        $__rel = $__path;
+    }
+    if ($__rel === '' || $__rel === false) $__rel = '/';
+    if (!str_starts_with($__rel, '/')) $__rel = '/' . $__rel;
+}
+$__rel = rtrim($__rel, '/');
+if ($__rel === '') $__rel = '/';
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     foreach (cors_headers() as $k => $v) header("$k: $v");
@@ -1992,7 +1934,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 try {
-    if ($__rel === '/') { header('Location: ' . $__scriptBase . '/live.m3u8', true, 302); exit; }
+    if ($__rel === '/') { header('Location: ' . $__scriptUrl . '/live.m3u8', true, 302); exit; }
     if ($__rel === '/admin') { send_html(ADMIN_HTML); exit; }
     if ($__rel === '/live.m3u8') { handle_live(); exit; }
     if ($__rel === '/seg') { handle_seg_proxy(); exit; }
