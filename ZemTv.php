@@ -17,7 +17,7 @@ if (isset($_GET['debug'])) {
     echo "PATH_INFO     : " . ($_SERVER['PATH_INFO'] ?? '(yok)') . "\n";
     echo "GET p         : " . ($_GET['p'] ?? '(yok)') . "\n";
     echo "PHP Version   : " . PHP_VERSION . "\n";
-    echo "ffprobe       : " . (shell_exec('which ffprobe 2>/dev/null') ?: 'YOK') . "\n";
+    echo "ffprobe       : " . (trim((string)shell_exec('which ffprobe 2>/dev/null')) ?: 'YOK') . "\n";
     exit;
 }
 
@@ -280,9 +280,8 @@ class KV {
 function ffprobe_duration(string $url): float {
     $ffprobe = trim((string)shell_exec('which ffprobe 2>/dev/null'));
     if ($ffprobe === '') {
-        // ffprobe yok, uzak HEAD ile content-length'ten tahmin et (ortalama 1.5 Mbps)
         $h = head_request($url);
-        if ($h['length'] > 0) return round($h['length'] / 187500, 1); // ~1.5 Mbps
+        if ($h['length'] > 0) return round($h['length'] / 187500, 1);
         return 0.0;
     }
     $cmd = escapeshellcmd($ffprobe)
@@ -301,7 +300,6 @@ function fetch_text(string $u): array {
     return ['body' => $r['body'], 'url' => $r['url']];
 }
 function load_item(string $srcUrl): array {
-    // MP4/MKV/AVI vs. doğrudan video dosyası mı?
     if (is_video_url($srcUrl)) {
         return load_direct_video($srcUrl);
     }
@@ -346,7 +344,7 @@ function parse_media(string $txt, string $base): array {
         } elseif ($dur !== null) {
             $d = round($dur, 3);
             $seg = [$d, abs_url($line, $base)];
-            if ($pendingKey !== null) { $seg[] = $pendingKey; $pendingKey = null; }
+            if ($pendingKey !== null) { $seg[] = (string)$pendingKey; $pendingKey = null; }
             $segs[] = $seg;
             $total += $d;
             if ($d > $maxSeg) $maxSeg = $d;
@@ -359,16 +357,14 @@ function load_direct_video(string $url): array {
     $h = head_request($url);
     if ($h['status'] >= 400) throw new RuntimeException('Video açılamadı: HTTP ' . $h['status']);
     if ($h['status'] === 0) throw new RuntimeException('Video adresine ulaşılamadı: ' . ($h['error'] ?: 'bilinmeyen'));
-    $len = $h['length'];
-    // ffprobe ile gerçek süreyi öğren
+    $len = (int)$h['length'];
     $dur = ffprobe_duration($url);
     if ($dur <= 0) {
-        // ffprobe yok veya başarısız: content-length'ten tahmin (ortalama 1.2 Mbps video)
         if ($len > 0) $dur = round($len / 150000, 1);
     }
     if ($dur <= 0) throw new RuntimeException('Video süresi tespit edilemedi (ffprobe kurulu mu?)');
-    // Tek segment: [süre, url, size]
-    $segs = [[$dur, $url, $len]];
+    // MP4 segment: [süre, url] — üçüncü eleman YOK (kafa karışıklığını önler)
+    $segs = [[$dur, $url]];
     return [
         'segs'     => $segs,
         'map'      => '',
@@ -569,12 +565,11 @@ function handle_live(): void {
         $data = KV::get_segs($items[$sl['k']]['id'], $items[$sl['k']]['v'] ?? 0);
         if (!$data) { send_text('Yayın verisi okunamadı', 503); return; }
         if (!empty($data['direct'])) {
-            // MP4/MKV: tüm slot tek segment
             $j = 0;
         } else {
             $acc = 0.0; $j = count($data['segs']) - 1;
             foreach ($data['segs'] as $i => $seg) {
-                $acc += $seg[0];
+                $acc += (float)$seg[0];
                 if ($pos['offset'] < $acc) { $j = $i; break; }
             }
             $j = min($j, $sl['n'] - 1);
@@ -589,14 +584,14 @@ function handle_live(): void {
 
     $segPath = $GLOBALS['__SCRIPT_URL'] . '?p=/seg';
 
-    $wrap = function (string $u, array $seg = []) use ($cfg, $segPath): string {
-        if (!$cfg['proxy']) return $u;
-        $extra = '';
-        if (count($seg) > 2 && is_numeric($seg[2]) && $seg[2] > 0) $extra = '&sz=' . (int)$seg[2];
-        return $segPath . '&u=' . b64u($u) . '&s=' . sign_url($cfg['secret'], $u) . $extra;
+    $wrap = function ($u) use ($cfg, $segPath): string {
+        $u = (string)$u;
+        if (!$cfg['proxy'] || $u === '') return $u;
+        return $segPath . '&u=' . b64u($u) . '&s=' . sign_url($cfg['secret'], $u);
     };
-    $wrapLine = function (string $line) use ($wrap): string {
-        if (!preg_match('/URI="([^"]*)"/', $line, $m)) return $line;
+    $wrapLine = function ($line) use ($wrap): string {
+        $line = (string)$line;
+        if ($line === '' || !preg_match('/URI="([^"]*)"/', $line, $m)) return $line;
         $w = $wrap($m[1]);
         return str_replace($m[0], 'URI="' . $w . '"', $line);
     };
@@ -613,22 +608,28 @@ function handle_live(): void {
         $isEntry = ($n === 0 || $d['j'] === 0);
         if ($d['j'] === 0) $body[] = '#EXT-X-DISCONTINUITY';
 
-        $eff = null;
-        if (count($seg) > 2) $eff = $seg[2];
-        elseif ($isEntry) {
-            $eff = '';
+        // $eff sadece string olabilir; MP4'te key yok
+        $eff = '';
+        if (count($seg) > 2 && is_string($seg[2]) && $seg[2] !== '') {
+            $eff = $seg[2];
+        } elseif ($isEntry) {
             for ($b = $d['j']; $b >= 0; $b--) {
-                if (count($data['segs'][$b]) > 2) { $eff = $data['segs'][$b][2]; break; }
+                if (count($data['segs'][$b]) > 2 && is_string($data['segs'][$b][2]) && $data['segs'][$b][2] !== '') {
+                    $eff = $data['segs'][$b][2];
+                    break;
+                }
             }
-        } else $eff = $curKey;
+        } else {
+            $eff = is_string($curKey) ? $curKey : '';
+        }
 
         if ($eff !== $curKey) {
-            $body[] = $eff ? $wrapLine($eff) : '#EXT-X-KEY:METHOD=NONE';
+            $body[] = ($eff !== '') ? $wrapLine($eff) : '#EXT-X-KEY:METHOD=NONE';
             $curKey = $eff;
         }
         if ($isEntry && !empty($data['map'])) $body[] = $wrapLine($data['map']);
         $body[] = '#EXTINF:' . number_format((float)$seg[0], 3, '.', '') . ',';
-        $body[] = $wrap($seg[1], $seg);
+        $body[] = $wrap($seg[1]);
         if (!empty($data['direct'])) $usedDirect = true;
         $lastIdx = $idx;
     }
@@ -661,12 +662,11 @@ function handle_seg_proxy(): void {
     if (!$cfg['secret'] || !preg_match('#^https?://#i', $u) || $sig !== sign_url($cfg['secret'], $u)) {
         send_text('Yetkisiz', 403); return;
     }
-    $isDirect = is_video_url($u);
     $headers = ['Accept: */*'];
     if (!empty($_SERVER['HTTP_RANGE'])) $headers[] = 'Range: ' . $_SERVER['HTTP_RANGE'];
 
     $ch = curl_init($u);
-    $opts = [
+    curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => false,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_MAXREDIRS      => 5,
@@ -685,8 +685,7 @@ function handle_seg_proxy(): void {
             return strlen($h);
         },
         CURLOPT_WRITEFUNCTION => function ($ch, $data) { echo $data; return strlen($data); },
-    ];
-    curl_setopt_array($ch, $opts);
+    ]);
     foreach (cors_headers() as $k => $v) header("$k: $v");
     header('Cache-Control: public, max-age=60');
     curl_exec($ch);
