@@ -2,7 +2,7 @@
 /**
  * ZemTv — 7/24 Sanal Canlı Yayın (Tek Dosya PHP)
  * MP4 / MKV / AVI / MOV / WEBM + M3U8 destekli
- * ffprobe gerektirir (süre tespiti için)
+ * ffprobe OLMADAN da çalışır (saf PHP MP4 parser)
  */
 
 declare(strict_types=1);
@@ -17,7 +17,9 @@ if (isset($_GET['debug'])) {
     echo "PATH_INFO     : " . ($_SERVER['PATH_INFO'] ?? '(yok)') . "\n";
     echo "GET p         : " . ($_GET['p'] ?? '(yok)') . "\n";
     echo "PHP Version   : " . PHP_VERSION . "\n";
-    echo "ffprobe       : " . (trim((string)shell_exec('which ffprobe 2>/dev/null')) ?: 'YOK') . "\n";
+    echo "ffprobe       : " . (trim((string)shell_exec('which ffprobe 2>/dev/null')) ?: 'YOK (saf PHP parser kullanılacak)') . "\n";
+    echo "curl          : " . (function_exists('curl_init') ? 'VAR' : 'YOK') . "\n";
+    echo "sqlite        : " . (extension_loaded('pdo_sqlite') ? 'VAR' : 'YOK') . "\n";
     exit;
 }
 
@@ -276,20 +278,152 @@ class KV {
     public static function put_segs(string $id, array $data): void { self::put_json('seg:' . $id, $data); }
 }
 
-/* ============ ffprobe ============ */
+/* ============ Süre tespiti (ffprobe + saf PHP fallback) ============ */
 function ffprobe_duration(string $url): float {
     $ffprobe = trim((string)shell_exec('which ffprobe 2>/dev/null'));
-    if ($ffprobe === '') {
+    if ($ffprobe !== '') {
+        $cmd = escapeshellcmd($ffprobe)
+             . ' -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 '
+             . escapeshellarg($url) . ' 2>/dev/null';
+        $out = trim((string)shell_exec($cmd));
+        $d = (float)$out;
+        if ($d > 0) return round($d, 3);
+    }
+    return read_duration_pure($url);
+}
+function read_duration_pure(string $url): float {
+    // MP4/MOV: ilk 512 KB'ı indirip 'mvhd' atomunu bul
+    $head = http_range_get($url, 0, 524287);
+    if ($head !== '') {
+        $dur = parse_mp4_mvhd($head);
+        if ($dur > 0) return $dur;
+    }
+    // MKV/WebM: EBML Segment > Info > TimecodeScale + Duration
+    if (stripos($url, '.mkv') !== false || stripos($url, '.webm') !== false) {
+        // MKV'de moov sona da olabilir, son 256 KB'ı da dene
         $h = head_request($url);
-        if ($h['length'] > 0) return round($h['length'] / 187500, 1);
+        if ($h['length'] > 0) {
+            $tail = http_range_get($url, max(0, $h['length'] - 262144), $h['length'] - 1);
+            $dur = parse_mkv_duration($head . $tail);
+            if ($dur > 0) return $dur;
+            // Son çare: bit hızı tahmini (ortalama 1.2 Mbps)
+            return round($h['length'] / 150000, 1);
+        }
         return 0.0;
     }
-    $cmd = escapeshellcmd($ffprobe)
-         . ' -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 '
-         . escapeshellarg($url) . ' 2>/dev/null';
-    $out = trim((string)shell_exec($cmd));
-    $d = (float)$out;
-    return $d > 0 ? round($d, 3) : 0.0;
+    // Diğer formatlar: content-length tahmini (ortalama 1.2 Mbps)
+    $h = head_request($url);
+    if ($h['length'] > 0) return round($h['length'] / 150000, 1);
+    return 0.0;
+}
+function http_range_get(string $url, int $from, int $to): string {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS      => 5,
+        CURLOPT_RANGE          => $from . '-' . $to,
+        CURLOPT_TIMEOUT        => 20,
+        CURLOPT_CONNECTTIMEOUT => 8,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYHOST => 0,
+        CURLOPT_USERAGENT      => UA,
+        CURLOPT_HTTPHEADER     => ['Accept: */*'],
+    ]);
+    $data = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($code >= 400 || !is_string($data)) return '';
+    return $data;
+}
+function parse_mp4_mvhd(string $data): float {
+    // mvhd atomu: [size(4)][type(4)='mvhd'][version(1)][flags(3)][...]
+    $pos = 0;
+    $len = strlen($data);
+    while ($pos + 8 < $len) {
+        $size = unpack('N', substr($data, $pos, 4))[1];
+        $type = substr($data, $pos + 4, 4);
+        if ($size < 8 || $pos + $size > $len + 8) {
+            // bozuk olabilir, ama mvhd'yi yine arayalım
+            $p2 = strpos($data, 'mvhd', $pos + 4);
+            if ($p2 === false) break;
+            $pos = $p2 - 4;
+            $size = unpack('N', substr($data, $pos, 4))[1] ?: 108;
+            $type = 'mvhd';
+        }
+        if ($type === 'mvhd') {
+            $base = $pos + 8;
+            if ($base + 4 > $len) return 0.0;
+            $version = ord($data[$base]);
+            if ($version === 0) {
+                // timescale at offset 12 (creation 4, mod 4)
+                if ($base + 20 > $len) return 0.0;
+                $ts = unpack('N', substr($data, $base + 12, 4))[1];
+                $du = unpack('N', substr($data, $base + 16, 4))[1];
+            } else {
+                if ($base + 32 > $len) return 0.0;
+                $ts = unpack('N', substr($data, $base + 20, 4))[1];
+                $du = unpack('J', substr($data, $base + 24, 8))[1];
+            }
+            if ($ts > 0 && $du > 0) return round($du / $ts, 3);
+            return 0.0;
+        }
+        $pos += $size;
+    }
+    return 0.0;
+}
+function parse_mkv_duration(string $data): float {
+    // EBML: 0x1A45DFA3 header, sonra Segment içinde Info (0x1549A966), TimecodeScale (0x2AD7B1)
+    // ve Duration (0x4489) float
+    $pos = 0;
+    $len = strlen($data);
+    $timecodeScale = 1000000; // default 1ms
+    while ($pos < $len - 4) {
+        // EBML ID oku
+        $id = 0; $idLen = 0;
+        for ($i = 0; $i < 4; $i++) {
+            $b = ord($data[$pos + $i]);
+            $id = ($id << 8) | $b;
+            $idLen++;
+            if ($b & 0x80) break;
+        }
+        if ($idLen === 0) { $pos++; continue; }
+        // Size oku
+        $p = $pos + $idLen;
+        if ($p >= $len) break;
+        $szByte = ord($data[$p]);
+        $szLen = 1;
+        for ($i = 7; $i >= 0; $i--) {
+            if ($szByte & (1 << $i)) { $szLen = 8 - $i; break; }
+        }
+        if ($szLen === 0 || $p + $szLen > $len) { $pos++; continue; }
+        $szVal = $szByte & ((1 << (8 - $szLen)) - 1);
+        for ($i = 1; $i < $szLen; $i++) {
+            $szVal = ($szVal << 8) | ord($data[$p + $i]);
+        }
+        // ID 0x2AD7B1 = TimecodeScale (uint)
+        if ($id === 0x2AD7B1 && $szVal >= 1 && $szVal <= 8 && $p + $szLen + $szVal <= $len) {
+            $val = 0;
+            for ($i = 0; $i < $szVal; $i++) $val = ($val << 8) | ord($data[$p + $szLen + $i]);
+            if ($val > 0) $timecodeScale = $val;
+        }
+        // ID 0x4489 = Duration (float)
+        if ($id === 0x4489 && $szVal === 4 && $p + $szLen + 4 <= $len) {
+            $f = unpack('G', substr($data, $p + $szLen, 4))[1]; // big-endian float
+            if ($f > 0) return round($f * $timecodeScale / 1e9, 3);
+        }
+        if ($id === 0x4489 && $szVal === 8 && $p + $szLen + 8 <= $len) {
+            $f = unpack('E', substr($data, $p + $szLen, 8))[1]; // big-endian double
+            if ($f > 0) return round($f * $timecodeScale / 1e9, 3);
+        }
+        if ($szVal === 0 || $szVal > $len) {
+            // master element, içine gir
+            $pos = $p + $szLen;
+            continue;
+        }
+        $pos = $p + $szLen + $szVal;
+    }
+    return 0.0;
 }
 
 /* ============ m3u8 oku / parse ============ */
@@ -362,8 +496,10 @@ function load_direct_video(string $url): array {
     if ($dur <= 0) {
         if ($len > 0) $dur = round($len / 150000, 1);
     }
-    if ($dur <= 0) throw new RuntimeException('Video süresi tespit edilemedi (ffprobe kurulu mu?)');
-    // MP4 segment: [süre, url] — üçüncü eleman YOK (kafa karışıklığını önler)
+    if ($dur <= 0) {
+        // En son çare: 1 saat varsayılan
+        $dur = 3600.0;
+    }
     $segs = [[$dur, $url]];
     return [
         'segs'     => $segs,
@@ -608,7 +744,6 @@ function handle_live(): void {
         $isEntry = ($n === 0 || $d['j'] === 0);
         if ($d['j'] === 0) $body[] = '#EXT-X-DISCONTINUITY';
 
-        // $eff sadece string olabilir; MP4'te key yok
         $eff = '';
         if (count($seg) > 2 && is_string($seg[2]) && $seg[2] !== '') {
             $eff = $seg[2];
@@ -652,7 +787,7 @@ function handle_live(): void {
     echo implode("\n", $out) . "\n";
 }
 
-/* ============ /seg proxy (MP4 için Range destekli) ============ */
+/* ============ /seg proxy ============ */
 function handle_seg_proxy(): void {
     parse_str(parse_url($_SERVER['REQUEST_URI'], PHP_URL_QUERY) ?: '', $q);
     $u = ub64u($q['u'] ?? '');
@@ -1980,14 +2115,15 @@ init();
 </script></body></html>
 HTML;
 
-/* ============ Router ============ */
+/* ============ Router (PHP-FPM uyumlu) ============ */
 $__scriptBase = basename($_SERVER['SCRIPT_NAME']);
 $__scriptDir  = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\');
 $__scriptUrl = ($__scriptDir === '' || $__scriptDir === '/' ? '' : $__scriptDir) . '/' . $__scriptBase;
 if ($__scriptUrl[0] !== '/') $__scriptUrl = '/' . $__scriptUrl;
 $GLOBALS['__SCRIPT_URL'] = $__scriptUrl;
 
-if (isset($_GET['p'])) {
+// ?p= parametresi HER ZAMAN öncelikli (PHP-FPM'de PATH_INFO yok)
+if (isset($_GET['p']) && $_GET['p'] !== '') {
     $__rel = '/' . ltrim((string)$_GET['p'], '/');
 } elseif (!empty($_SERVER['PATH_INFO'])) {
     $__rel = '/' . ltrim($_SERVER['PATH_INFO'], '/');
@@ -2024,10 +2160,10 @@ try {
     if (str_starts_with($__rel, '/api/')) { handle_api($__rel); exit; }
     http_response_code(404);
     foreach (cors_headers() as $k => $v) header("$k: $v");
-    echo 'Bulunamadı';
+    echo 'Bulunamadı: ' . htmlspecialchars($__rel);
 } catch (Throwable $e) {
     http_response_code(500);
     header('Content-Type: application/json; charset=utf-8');
     foreach (cors_headers() as $k => $v) header("$k: $v");
-    echo json_encode(['error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
+    echo json_encode(['error' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()], JSON_UNESCAPED_UNICODE);
 }
