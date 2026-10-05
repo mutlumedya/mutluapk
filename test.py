@@ -4,29 +4,66 @@ import sys
 import subprocess
 import shutil
 
-# --- OTOMATİK KURULUM ---
+# --- FFMPEG YOLU (Windows / Linux otomatik algılama) ---
+def ffmpeg_yolu_bul():
+    """FFmpeg'in tam yolunu bulur (Windows'ta C:\ffmpeg\bin gibi)."""
+    # 1) PATH'te var mı?
+    yol = shutil.which("ffmpeg")
+    if yol:
+        return yol
+
+    # 2) Windows'ta yaygın konumlar
+    if os.name == "nt":
+        adaylar = [
+            r"C:\ffmpeg\bin\ffmpeg.exe",
+            r"C:\ffmpeg\ffmpeg.exe",
+            r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
+            r"C:\Program Files (x86)\ffmpeg\bin\ffmpeg.exe",
+            os.path.expanduser(r"~\ffmpeg\bin\ffmpeg.exe"),
+        ]
+        for a in adaylar:
+            if os.path.exists(a):
+                return a
+
+    # 3) Linux'ta yaygın konumlar
+    for a in ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/snap/bin/ffmpeg"]:
+        if os.path.exists(a):
+            return a
+
+    return None
+
+
+FFMPEG_BIN = ffmpeg_yolu_bul()
+if FFMPEG_BIN:
+    print(f"✅ FFmpeg bulundu: {FFMPEG_BIN}")
+    # FFmpeg klasörünü PATH'e ekle (ffprobe vs. için de gerekli olabilir)
+    ffmpeg_dir = os.path.dirname(FFMPEG_BIN)
+    os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+else:
+    print("❌ FFmpeg bulunamadı! Lütfen C:\\ffmpeg\\bin içine kurun veya PATH'e ekleyin.")
+    # Linux'ta otomatik kurmayı dene
+    if os.name != "nt":
+        try:
+            subprocess.run(["apt-get", "update", "-qq"], check=False)
+            subprocess.run(["apt-get", "install", "-y", "-qq", "ffmpeg"], check=False)
+            FFMPEG_BIN = ffmpeg_yolu_bul()
+        except Exception as e:
+            print(f"⚠️ Otomatik kurulum başarısız: {e}")
+
+    if not FFMPEG_BIN:
+        print("🛑 FFmpeg olmadan devam edilemez. Çıkılıyor.")
+        sys.exit(1)
+
+
+# --- OTOMATİK PYTHON PAKET KURULUMU ---
 def pip_kur(paket):
     subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", paket], check=False)
 
-def sistem_paketi_kur(paket):
-    """apt-get ile sistem paketi kurar (root gerekir)."""
-    try:
-        subprocess.run(["apt-get", "update", "-qq"], check=False)
-        subprocess.run(["apt-get", "install", "-y", "-qq", paket], check=False)
-        return True
-    except Exception as e:
-        print(f"⚠️ Sistem paketi kurulamadı ({paket}): {e}")
-        return False
 
-def gerekli_paketleri_kontrol_et():
-    print("🔧 Gerekli paketler kontrol ediliyor...")
-
-    # 1) Python kütüphaneleri
-    python_paketleri = {
-        "requests": "requests",
-        "yt_dlp": "yt-dlp",
-    }
-    for modul, pip_adi in python_paketleri.items():
+def gerekli_python_paketleri():
+    print("🔧 Python paketleri kontrol ediliyor...")
+    paketler = {"requests": "requests", "yt_dlp": "yt-dlp"}
+    for modul, pip_adi in paketler.items():
         try:
             __import__(modul)
             print(f"✅ {pip_adi} zaten kurulu.")
@@ -34,27 +71,10 @@ def gerekli_paketleri_kontrol_et():
             print(f"📦 {pip_adi} kuruluyor...")
             pip_kur(pip_adi)
 
-    # 2) FFmpeg (sistem paketi)
-    if shutil.which("ffmpeg") is None:
-        print("📦 FFmpeg kuruluyor (bu biraz sürebilir)...")
-        sistem_paketi_kur("ffmpeg")
-        if shutil.which("ffmpeg") is None:
-            print("❌ FFmpeg kurulamadı! Lütfen manuel kurun: sudo apt-get install ffmpeg")
-            sys.exit(1)
-        else:
-            print("✅ FFmpeg kuruldu.")
-    else:
-        print("✅ FFmpeg zaten kurulu.")
 
-    # 3) Git (opsiyonel, sunucuda gerekmiyor ama zarar vermez)
-    if shutil.which("git") is None:
-        print("📦 Git kuruluyor...")
-        sistem_paketi_kur("git")
+gerekli_python_paketleri()
 
-# Bu fonksiyonu import'lardan ÖNCE çalıştır
-gerekli_paketleri_kontrol_et()
-
-# --- Şimdi normal import'lar ---
+# --- Normal import'lar ---
 import uuid
 import time
 import json
@@ -65,9 +85,9 @@ import yt_dlp
 # --- AYARLAR ---
 HAFIZA_DOSYASI = "hafiza.json"
 PLAYLIST_DOSYASI = "playlist.txt"
-KAYNAK_URL = "https://raw.githubusercontent.com/kimbumuratyavuz/capcanli/refs/heads/main/sinema.m3u"
+KAYNAK_URL = "https://huggingface.co/spaces/Fantikk/Film-Bot-Otomasyon/raw/main/kategoriler/sony-kids.m3u"
 
-# Sunucu ayarları (video yükleme)
+# Sunucu ayarları
 SUNUCU_BASE_URL = "http://45.158.14.16/film/"
 SUNUCU_USER = ""
 SUNUCU_PASS = ""
@@ -79,10 +99,7 @@ LOGO_GENISLIK = 80
 LOGO_X = 10
 LOGO_Y = 10
 
-# Maksimum çalışma süresi: 5 saat
 MAX_SURE_SANIYE = 5 * 60 * 60
-
-# Bekleme süresi (her film arasında)
 BEKLEME_SANIYE = 60
 
 
@@ -138,8 +155,9 @@ def logoyu_bas(girdi_yolu, cikti_yolu):
 
     logo_kaynak = LOGO_LOCAL if os.path.exists(LOGO_LOCAL) else LOGO_URL
 
+    # FFmpeg tam yolunu kullan
     komut = [
-        "ffmpeg", "-y",
+        FFMPEG_BIN, "-y",
         "-i", girdi_yolu,
         "-i", logo_kaynak,
         "-filter_complex",
@@ -270,12 +288,12 @@ if __name__ == "__main__":
                 hafizayi_kaydet(hafiza)
                 playlist_guncelle(film['isim'], yuklenen_url)
             else:
-                print("🔄 Yükleme başarısız, hafızaya eklenmedi. Sonraki döngüde tekrar denenecek.")
+                print("🔄 Yükleme başarısız, hafızaya eklenmedi.")
 
             if os.path.exists(dosya_adi):
                 os.remove(dosya_adi)
 
-            print(f"⏳ Sıradakine geçmeden önce {BEKLEME_SANIYE} saniye bekleniyor...")
+            print(f"⏳ {BEKLEME_SANIYE} saniye bekleniyor...")
             time.sleep(BEKLEME_SANIYE)
         else:
             print(f"⚠️ {film['isim']} indirilemedi, atlanıyor...")
