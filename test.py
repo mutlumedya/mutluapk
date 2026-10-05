@@ -62,7 +62,12 @@ import yt_dlp
 # --- AYARLAR ---
 HAFIZA_DOSYASI = "hafiza.json"
 PLAYLIST_DOSYASI = "playlist.txt"
-KAYNAK_URL = "https://huggingface.co/spaces/Fantikk/Film-Bot-Otomasyon/raw/main/kategoriler/sony-kids.m3u"
+
+# YENİ KAYNAK URL (GitHub raw)
+KAYNAK_URL = "https://raw.githubusercontent.com/kimbumuratyavuz/capcanli/refs/heads/main/sinema.m3u"
+
+# Yerel m3u kopyası varsa onu kullan (offline çalışmak için)
+YEREL_M3U = "sinema.m3u"
 
 SUNUCU_BASE_URL = "http://45.158.14.16/film/"
 SUNUCU_USER = ""
@@ -96,22 +101,37 @@ def hafizayi_kaydet(veri):
 
 
 def listeyi_cek_ve_ayikla(url):
-    print(f"🌐 Liste çekiliyor: {url}")
-    try:
-        r = requests.get(url, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
-        print(f"   HTTP {r.status_code}, {len(r.text)} byte geldi.")
-        r.raise_for_status()
-    except Exception as e:
-        print(f"❌ Liste indirilemedi: {e}")
-        return []
+    """
+    m3u listesini çeker ve ayrıştırır.
+    Önce yerel dosya varsa onu kullanır, yoksa URL'den indirir.
+    """
+    if os.path.exists(YEREL_M3U):
+        print(f"📂 Yerel liste kullanılıyor: {YEREL_M3U}")
+        try:
+            with open(YEREL_M3U, "r", encoding="utf-8", errors="ignore") as f:
+                icerik = f.read()
+        except Exception as e:
+            print(f"❌ Yerel liste okunamadı: {e}")
+            return []
+    else:
+        print(f"🌐 Liste çekiliyor: {url}")
+        try:
+            r = requests.get(url, timeout=60, headers={"User-Agent": "Mozilla/5.0"})
+            print(f"   HTTP {r.status_code}, {len(r.text)} byte geldi.")
+            r.raise_for_status()
+            icerik = r.text
+        except Exception as e:
+            print(f"❌ Liste indirilemedi: {e}")
+            return []
 
-    lines = r.text.splitlines()
+    lines = icerik.splitlines()
     print(f"   Toplam satır: {len(lines)}")
 
     filmler = []
     for i in range(len(lines)):
-        if lines[i].startswith("#EXTINF"):
-            extinf = lines[i]
+        satir = lines[i].strip()
+        if satir.startswith("#EXTINF"):
+            extinf = satir
             vid_url = None
             if i + 1 < len(lines):
                 sonraki = lines[i + 1].strip()
@@ -119,14 +139,17 @@ def listeyi_cek_ve_ayikla(url):
                     vid_url = sonraki
 
             if vid_url:
+                # İsim: virgülden sonrası, | karakterinden öncesi
                 isim_kismi = extinf.split(",")[-1]
                 saf_isim = isim_kismi.split("|")[0].strip()
+                if not saf_isim:
+                    saf_isim = f"video_{i}"
                 filmler.append({"isim": saf_isim, "url": vid_url})
 
     print(f"   Ayrıştırılan film sayısı: {len(filmler)}")
     if filmler:
-        print("   İlk 3 örnek:")
-        for f in filmler[:3]:
+        print("   İlk 5 örnek:")
+        for f in filmler[:5]:
             print(f"     - {f['isim']}")
     return filmler
 
@@ -153,7 +176,7 @@ def logoyu_indir():
         return True
     except Exception as e:
         print(f"⚠️ Logo indirilemedi: {e}")
-        print("   → Çözüm: Logo'yu tarayıcıdan indirip script klasörüne 'logo.png' olarak koyun.")
+        print("   → Logo'yu tarayıcıdan indirip script klasörüne 'logo.png' olarak koyun.")
         return False
 
 
