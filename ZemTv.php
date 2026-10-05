@@ -1,6 +1,8 @@
 <?php
 /**
- * baba120 — 7/24 Sanal Canlı Yayın (Tek Dosya PHP) — DÜZELTİLMİŞ
+ * ZemTv — 7/24 Sanal Canlı Yayın (Tek Dosya PHP)
+ * MP4 / MKV / AVI / MOV / WEBM + M3U8 destekli
+ * ffprobe gerektirir (süre tespiti için)
  */
 
 declare(strict_types=1);
@@ -15,6 +17,7 @@ if (isset($_GET['debug'])) {
     echo "PATH_INFO     : " . ($_SERVER['PATH_INFO'] ?? '(yok)') . "\n";
     echo "GET p         : " . ($_GET['p'] ?? '(yok)') . "\n";
     echo "PHP Version   : " . PHP_VERSION . "\n";
+    echo "ffprobe       : " . (shell_exec('which ffprobe 2>/dev/null') ?: 'YOK') . "\n";
     exit;
 }
 
@@ -23,6 +26,7 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const WINDOW_SIZE = 6;
 const BEHIND = 3;
 const DAY = 86400;
+const VIDEO_EXT = '/\.(mp4|mkv|avi|mov|webm|flv|m4v|ts|mpg|mpeg|wmv|3gp)(\?|#|$)/i';
 
 const DEFAULT_LOGO = ['on' => false, 'url' => '', 'x' => 2, 'y' => 4, 'size' => 12, 'opacity' => 100];
 const DEFAULT_CFG = [
@@ -33,7 +37,7 @@ const DEFAULT_CFG = [
     'showInfo'  => true,
     'proxy'     => true,
     'tz'        => 180,
-    'name'      => 'baba120 TV',
+    'name'      => 'ZemTv',
     'secret'    => '',
 ];
 
@@ -43,7 +47,7 @@ function cors_headers(): array {
         'Access-Control-Allow-Origin'  => '*',
         'Access-Control-Allow-Methods' => 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers' => 'Content-Type, X-Admin-Key, Range',
-        'Access-Control-Expose-Headers'=> 'Content-Length, Content-Range',
+        'Access-Control-Expose-Headers'=> 'Content-Length, Content-Range, Accept-Ranges',
     ];
 }
 function send_json($obj, int $status = 200): void {
@@ -88,7 +92,13 @@ function guess_title(string $u): string {
     $p = parse_url($u);
     if (!$p || empty($p['path'])) return $p['host'] ?? $u;
     $parts = array_values(array_filter(explode('/', $p['path'])));
-    return urldecode(end($parts) ?: ($p['host'] ?? $u));
+    $last = end($parts) ?: ($p['host'] ?? $u);
+    $last = urldecode($last);
+    $last = preg_replace(VIDEO_EXT, '', $last);
+    return $last;
+}
+function is_video_url(string $u): bool {
+    return (bool)preg_match(VIDEO_EXT, $u);
 }
 function http_get(string $url, array $extraHeaders = [], int $timeout = 20): array {
     $ch = curl_init($url);
@@ -123,6 +133,29 @@ function http_get(string $url, array $extraHeaders = [], int $timeout = 20): arr
         }
     }
     return ['status' => $code, 'body' => $body, 'headers' => $headers, 'url' => $effUrl];
+}
+function head_request(string $url, int $timeout = 15): array {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_NOBODY         => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_MAXREDIRS      => 5,
+        CURLOPT_TIMEOUT        => $timeout,
+        CURLOPT_CONNECTTIMEOUT => 8,
+        CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYHOST => 0,
+        CURLOPT_USERAGENT      => UA,
+        CURLOPT_HTTPHEADER     => ['Accept: */*'],
+    ]);
+    curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $len  = (int)curl_getinfo($ch, CURLINFO_CONTENT_LENGTH_DOWNLOAD);
+    $ct   = (string)curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+    $effUrl = curl_getinfo($ch, CURLINFO_EFFECTIVE_URL);
+    $err  = curl_error($ch);
+    curl_close($ch);
+    return ['status' => $code, 'length' => $len, 'type' => $ct, 'url' => $effUrl, 'error' => $err];
 }
 function abs_url(string $u, string $base): string {
     if (preg_match('#^https?://#i', $u)) return $u;
@@ -175,7 +208,7 @@ class KV {
         if (self::$db === null) {
             $dir = __DIR__ . '/data';
             if (!is_dir($dir)) @mkdir($dir, 0755, true);
-            $file = $dir . '/baba120.sqlite';
+            $file = $dir . '/zemtv.sqlite';
             self::$db = new PDO('sqlite:' . $file, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
             self::$db->exec('PRAGMA journal_mode = WAL');
             self::$db->exec('CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL, t INTEGER NOT NULL)');
@@ -243,21 +276,35 @@ class KV {
     public static function put_segs(string $id, array $data): void { self::put_json('seg:' . $id, $data); }
 }
 
+/* ============ ffprobe ============ */
+function ffprobe_duration(string $url): float {
+    $ffprobe = trim((string)shell_exec('which ffprobe 2>/dev/null'));
+    if ($ffprobe === '') {
+        // ffprobe yok, uzak HEAD ile content-length'ten tahmin et (ortalama 1.5 Mbps)
+        $h = head_request($url);
+        if ($h['length'] > 0) return round($h['length'] / 187500, 1); // ~1.5 Mbps
+        return 0.0;
+    }
+    $cmd = escapeshellcmd($ffprobe)
+         . ' -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 '
+         . escapeshellarg($url) . ' 2>/dev/null';
+    $out = trim((string)shell_exec($cmd));
+    $d = (float)$out;
+    return $d > 0 ? round($d, 3) : 0.0;
+}
+
 /* ============ m3u8 oku / parse ============ */
 function fetch_text(string $u): array {
-    if (preg_match('/\.(mp4|mkv|avi|mov|webm|ts|flv|mp3|aac)(\?|#|$)/i', $u)) {
-        throw new RuntimeException('Doğrudan video dosyası desteklenmiyor (m3u8 olmalı)');
-    }
     $r = http_get($u, [], 20);
     if ($r['status'] < 200 || $r['status'] >= 300) throw new RuntimeException('Kaynak açılamadı: HTTP ' . $r['status']);
-    $ct = $r['headers']['content-type'] ?? '';
-    $cl = (int)($r['headers']['content-length'] ?? 0);
-    if ((preg_match('#^(video|audio)/#i', $ct) && !preg_match('/mpegurl/i', $ct)) || $cl > 8000000) {
-        throw new RuntimeException('Bu adres m3u8 değil (video dosyası)');
-    }
+    if (!str_contains($r['body'], '#EXTM3U')) throw new RuntimeException('Geçerli bir m3u8 adresi değil');
     return ['body' => $r['body'], 'url' => $r['url']];
 }
 function load_item(string $srcUrl): array {
+    // MP4/MKV/AVI vs. doğrudan video dosyası mı?
+    if (is_video_url($srcUrl)) {
+        return load_direct_video($srcUrl);
+    }
     $r = fetch_text($srcUrl);
     if (!str_contains($r['body'], '#EXTM3U')) throw new RuntimeException('Geçerli bir m3u8 adresi değil');
     $text = $r['body']; $base = $r['url'];
@@ -308,6 +355,30 @@ function parse_media(string $txt, string $base): array {
     }
     return ['segs' => $segs, 'map' => $map, 'live' => $live, 'duration' => round($total, 3), 'maxSeg' => $maxSeg];
 }
+function load_direct_video(string $url): array {
+    $h = head_request($url);
+    if ($h['status'] >= 400) throw new RuntimeException('Video açılamadı: HTTP ' . $h['status']);
+    if ($h['status'] === 0) throw new RuntimeException('Video adresine ulaşılamadı: ' . ($h['error'] ?: 'bilinmeyen'));
+    $len = $h['length'];
+    // ffprobe ile gerçek süreyi öğren
+    $dur = ffprobe_duration($url);
+    if ($dur <= 0) {
+        // ffprobe yok veya başarısız: content-length'ten tahmin (ortalama 1.2 Mbps video)
+        if ($len > 0) $dur = round($len / 150000, 1);
+    }
+    if ($dur <= 0) throw new RuntimeException('Video süresi tespit edilemedi (ffprobe kurulu mu?)');
+    // Tek segment: [süre, url, size]
+    $segs = [[$dur, $url, $len]];
+    return [
+        'segs'     => $segs,
+        'map'      => '',
+        'live'     => false,
+        'duration' => $dur,
+        'maxSeg'   => $dur,
+        'direct'   => true,
+        'size'     => $len,
+    ];
+}
 function parse_list(string $txt, string $base): array {
     $out = []; $title = '';
     foreach (preg_split('/\r?\n/', $txt) as $raw) {
@@ -331,7 +402,9 @@ function add_one(string $title, string $u): array {
     if (!count($data['segs'])) throw new RuntimeException('Kaynakta segment bulunamadı');
     $id = rand_id(8);
     $v = (int)(microtime(true) * 1000);
-    KV::put_segs($id, ['segs' => $data['segs'], 'map' => $data['map']]);
+    $rec = ['segs' => $data['segs'], 'map' => $data['map']];
+    if (!empty($data['direct'])) { $rec['direct'] = true; $rec['size'] = $data['size'] ?? 0; }
+    KV::put_segs($id, $rec);
     return [
         'id' => $id,
         'title' => trim($title) !== '' ? trim($title) : guess_title($u),
@@ -340,6 +413,8 @@ function add_one(string $title, string $u): array {
         'segCount' => count($data['segs']),
         'maxSeg' => $data['maxSeg'],
         'live' => $data['live'],
+        'direct' => !empty($data['direct']),
+        'size' => $data['size'] ?? 0,
         'v' => $v,
         'addedAt' => $v,
     ];
@@ -349,7 +424,7 @@ function add_one(string $title, string $u): array {
 function mk_slot(array $items, int $k, float $start, float $len, bool $fixed): array {
     $it = $items[$k];
     $n = $it['segCount'];
-    if ($len < $it['duration'] - 0.001) {
+    if ($len < $it['duration'] - 0.001 && $n > 1) {
         $avg = $it['duration'] / max(1, $it['segCount']);
         $n = min($it['segCount'], max(1, (int)ceil($len / $avg)));
     }
@@ -460,6 +535,8 @@ function now_info(array $cfg, array $items): ?array {
         'percent' => $dur > 0 ? min(100, round($p['offset'] / $dur * 1000) / 10) : 0,
         'next' => $hasNext ? $items[$nx['k']]['title'] : null,
         'cycle' => $p['cycle'], 'itemLogo' => $it['logo'] ?? null,
+        'direct' => !empty($it['direct']),
+        'itemId' => $it['id'],
     ];
 }
 
@@ -491,12 +568,17 @@ function handle_live(): void {
         $sl = $tl['slots'][$pos['s']];
         $data = KV::get_segs($items[$sl['k']]['id'], $items[$sl['k']]['v'] ?? 0);
         if (!$data) { send_text('Yayın verisi okunamadı', 503); return; }
-        $acc = 0.0; $j = count($data['segs']) - 1;
-        foreach ($data['segs'] as $i => $seg) {
-            $acc += $seg[0];
-            if ($pos['offset'] < $acc) { $j = $i; break; }
+        if (!empty($data['direct'])) {
+            // MP4/MKV: tüm slot tek segment
+            $j = 0;
+        } else {
+            $acc = 0.0; $j = count($data['segs']) - 1;
+            foreach ($data['segs'] as $i => $seg) {
+                $acc += $seg[0];
+                if ($pos['offset'] < $acc) { $j = $i; break; }
+            }
+            $j = min($j, $sl['n'] - 1);
         }
-        $j = min($j, $sl['n'] - 1);
         $G = $pos['cycle'] * $tl['totalSegs'] + $sl['pre'] + $j;
     }
     $seqNoLoop = ($tl['mode'] === 'seq' && !$cfg['loop']);
@@ -505,12 +587,13 @@ function handle_live(): void {
     $d0 = decomp($tl, $start);
     $dseq = $d0['c'] * count($tl['slots']) + $d0['s'] + ($d0['j'] > 0 ? 1 : 0);
 
-    // /seg yolu: baba120.php?p=/seg
     $segPath = $GLOBALS['__SCRIPT_URL'] . '?p=/seg';
 
-    $wrap = function (string $u) use ($cfg, $segPath): string {
+    $wrap = function (string $u, array $seg = []) use ($cfg, $segPath): string {
         if (!$cfg['proxy']) return $u;
-        return $segPath . '&u=' . b64u($u) . '&s=' . sign_url($cfg['secret'], $u);
+        $extra = '';
+        if (count($seg) > 2 && is_numeric($seg[2]) && $seg[2] > 0) $extra = '&sz=' . (int)$seg[2];
+        return $segPath . '&u=' . b64u($u) . '&s=' . sign_url($cfg['secret'], $u) . $extra;
     };
     $wrapLine = function (string $line) use ($wrap): string {
         if (!preg_match('/URI="([^"]*)"/', $line, $m)) return $line;
@@ -518,7 +601,7 @@ function handle_live(): void {
         return str_replace($m[0], 'URI="' . $w . '"', $line);
     };
 
-    $body = []; $curKey = ''; $lastIdx = $start - 1;
+    $body = []; $curKey = ''; $lastIdx = $start - 1; $usedDirect = false;
     for ($n = 0; $n < WINDOW_SIZE; $n++) {
         $idx = $start + $n;
         if ($seqNoLoop && $idx >= $tl['totalSegs']) break;
@@ -545,7 +628,8 @@ function handle_live(): void {
         }
         if ($isEntry && !empty($data['map'])) $body[] = $wrapLine($data['map']);
         $body[] = '#EXTINF:' . number_format((float)$seg[0], 3, '.', '') . ',';
-        $body[] = $wrap($seg[1]);
+        $body[] = $wrap($seg[1], $seg);
+        if (!empty($data['direct'])) $usedDirect = true;
         $lastIdx = $idx;
     }
     if ($lastIdx < $start) { send_text('Yayın hazırlanıyor', 503); return; }
@@ -558,6 +642,7 @@ function handle_live(): void {
         ...$body,
     ];
     if ($seqNoLoop && $lastIdx >= $tl['totalSegs'] - 1) $out[] = '#EXT-X-ENDLIST';
+    if ($usedDirect) $out[] = '#EXT-X-INDEPENDENT-SEGMENTS';
 
     http_response_code(200);
     header('Content-Type: application/vnd.apple.mpegurl');
@@ -566,7 +651,7 @@ function handle_live(): void {
     echo implode("\n", $out) . "\n";
 }
 
-/* ============ /seg proxy ============ */
+/* ============ /seg proxy (MP4 için Range destekli) ============ */
 function handle_seg_proxy(): void {
     parse_str(parse_url($_SERVER['REQUEST_URI'], PHP_URL_QUERY) ?: '', $q);
     $u = ub64u($q['u'] ?? '');
@@ -576,17 +661,19 @@ function handle_seg_proxy(): void {
     if (!$cfg['secret'] || !preg_match('#^https?://#i', $u) || $sig !== sign_url($cfg['secret'], $u)) {
         send_text('Yetkisiz', 403); return;
     }
+    $isDirect = is_video_url($u);
     $headers = ['Accept: */*'];
     if (!empty($_SERVER['HTTP_RANGE'])) $headers[] = 'Range: ' . $_SERVER['HTTP_RANGE'];
 
     $ch = curl_init($u);
-    curl_setopt_array($ch, [
+    $opts = [
         CURLOPT_RETURNTRANSFER => false,
         CURLOPT_FOLLOWLOCATION => true,
         CURLOPT_MAXREDIRS      => 5,
-        CURLOPT_TIMEOUT        => 30,
+        CURLOPT_TIMEOUT        => 0,
         CURLOPT_CONNECTTIMEOUT => 10,
         CURLOPT_SSL_VERIFYPEER => false,
+        CURLOPT_SSL_VERIFYHOST => 0,
         CURLOPT_USERAGENT      => UA,
         CURLOPT_HTTPHEADER     => $headers,
         CURLOPT_HEADERFUNCTION => function ($ch, $h) {
@@ -598,7 +685,8 @@ function handle_seg_proxy(): void {
             return strlen($h);
         },
         CURLOPT_WRITEFUNCTION => function ($ch, $data) { echo $data; return strlen($data); },
-    ]);
+    ];
+    curl_setopt_array($ch, $opts);
     foreach (cors_headers() as $k => $v) header("$k: $v");
     header('Cache-Control: public, max-age=60');
     curl_exec($ch);
@@ -630,7 +718,7 @@ function handle_logo(): void {
 function handle_manifest(): void {
     $st = KV::state(false);
     $cfg = $st['cfg'];
-    $name = $cfg['name'] ?: 'baba120 TV';
+    $name = $cfg['name'] ?: 'ZemTv';
     $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
     $host = $_SERVER['HTTP_HOST'];
     $scriptUrl = $GLOBALS['__SCRIPT_URL'];
@@ -791,7 +879,11 @@ function handle_api(string $path): void {
                     $it['segCount'] = count($data['segs']);
                     $it['maxSeg'] = $data['maxSeg'];
                     $it['live'] = $data['live'];
-                    KV::put_segs($it['id'], ['segs' => $data['segs'], 'map' => $data['map']]);
+                    $it['direct'] = !empty($data['direct']);
+                    $it['size'] = $data['size'] ?? 0;
+                    $rec = ['segs' => $data['segs'], 'map' => $data['map']];
+                    if (!empty($data['direct'])) { $rec['direct'] = true; $rec['size'] = $data['size'] ?? 0; }
+                    KV::put_segs($it['id'], $rec);
                 }
                 if (array_key_exists('at', $b)) set_at_val($it, $b['at']);
                 break;
@@ -862,7 +954,11 @@ function handle_api(string $path): void {
                 $it['segCount'] = count($data['segs']);
                 $it['maxSeg'] = $data['maxSeg'];
                 $it['live'] = $data['live'];
-                KV::put_segs($it['id'], ['segs' => $data['segs'], 'map' => $data['map']]);
+                $it['direct'] = !empty($data['direct']);
+                $it['size'] = $data['size'] ?? 0;
+                $rec = ['segs' => $data['segs'], 'map' => $data['map']];
+                if (!empty($data['direct'])) { $rec['direct'] = true; $rec['size'] = $data['size'] ?? 0; }
+                KV::put_segs($it['id'], $rec);
                 break;
             }
             unset($it);
@@ -1055,6 +1151,8 @@ function state_out(array $cfg, array $items): array {
             'at' => isset($i['at']) ? pad2(intdiv($i['at'], 60)) . ':' . pad2($i['at'] % 60) : '',
             'segCount' => $i['segCount'],
             'live' => !empty($i['live']),
+            'direct' => !empty($i['direct']),
+            'size' => $i['size'] ?? 0,
             'logo' => $i['logo'] ?? null,
         ];
         $acc += $i['duration'];
@@ -1280,12 +1378,12 @@ now();setInterval(now,5000);
 </script></body></html>
 HTML;
 
-/* ============ Admin HTML (DÜZELTİLMİŞ — BASE doğru, ?p=/... kullanılıyor) ============ */
+/* ============ Admin HTML ============ */
 const ADMIN_HTML = <<<'HTML'
 <!doctype html>
 <html lang="tr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>baba120 Admin</title>
+<title>ZemTv Admin</title>
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#0f1115;color:#e8eaf0;font-family:system-ui,sans-serif;padding:14px;max-width:900px;margin:auto}
@@ -1334,13 +1432,14 @@ code{background:#0f1115;padding:2px 6px;border-radius:6px;word-break:break-all}
 .mback{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.72);z-index:20;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:14px}
 .mbox{background:#181b22;border:1px solid #262b36;border-radius:12px;padding:14px;width:100%;max-width:520px;margin:auto}
 .osec{border-top:1px solid #262b36;margin-top:14px;padding-top:12px}
+.badge{display:inline-block;background:#1e3a5f;color:#93c5fd;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:4px;vertical-align:middle}
 </style></head><body>
 <div id="toast"></div>
 <div id="app"></div>
 <div id="modal"></div>
 <script>
 var BASE=location.pathname;
-var KEY=localStorage.getItem('b120key')||'';
+var KEY=localStorage.getItem('zemtvkey')||'';
 var S=null,filled=false,V='';
 var L={on:false,url:'',x:2,y:4,size:12,opacity:100};
 var OR=null,PVSRC='',BGC=null;
@@ -1349,6 +1448,7 @@ function $(id){return document.getElementById(id)}
 function esc(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function pad(n){return String(n).padStart(2,'0')}
 function fmt(s){s=Math.max(0,Math.round(s));var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),x=s%60;return h+':'+pad(m)+':'+pad(x)}
+function fmtSize(b){if(!b)return '';var u=['B','KB','MB','GB','TB'],i=0;while(b>=1024&&i<u.length-1){b/=1024;i++}return b.toFixed(1)+' '+u[i]}
 function clamp(v,a,b){return Math.min(b,Math.max(a,v))}
 function hm(ms){return new Date(ms).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'})}
 function hm2(sec){sec=((Math.round(sec)%86400)+86400)%86400;return pad(Math.floor(sec/3600))+':'+pad(Math.floor((sec%3600)/60))}
@@ -1359,13 +1459,13 @@ function api(path,method,body){
   var u=BASE+'?p=/'+p;
   return fetch(u,{method:method||'GET',headers:{'Content-Type':'application/json','X-Admin-Key':KEY},body:body?JSON.stringify(body):undefined})
   .then(function(r){return r.json().then(function(j){
-    if(r.status===401){KEY='';localStorage.removeItem('b120key');init();throw new Error('Yetkisiz');}
+    if(r.status===401){KEY='';localStorage.removeItem('zemtvkey');init();throw new Error('Yetkisiz');}
     if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
     return j;
   })});
 }
 function init(){
-  clearInterval(window.__t);clearInterval(window.__p);
+  clearInterval(window.__t);
   fetch(BASE+'?p=/api/status').then(function(r){return r.json()}).then(function(s){
     if(s.error){$('app').innerHTML='<div class="card">'+esc(s.error)+'</div>';return;}
     if(!s.hasKey)setup();else if(!KEY)login();else{
@@ -1381,7 +1481,7 @@ function doSetup(){
   fetch(BASE+'?p=/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})})
   .then(function(r){return r.json()}).then(function(j){
     if(j.error){setMsg(j.error);return;}
-    KEY=k;localStorage.setItem('b120key',k);panel();
+    KEY=k;localStorage.setItem('zemtvkey',k);panel();
   });
 }
 function login(){
@@ -1389,9 +1489,9 @@ function login(){
 }
 function doLogin(){
   KEY=$('k').value;
-  api('/api/state').then(function(){localStorage.setItem('b120key',KEY);panel()}).catch(function(){setMsg('Anahtar hatalı')});
+  api('/api/state').then(function(){localStorage.setItem('zemtvkey',KEY);panel()}).catch(function(){setMsg('Anahtar hatalı')});
 }
-function logout(){KEY='';localStorage.removeItem('b120key');init()}
+function logout(){KEY='';localStorage.removeItem('zemtvkey');init()}
 
 function gridBtns(fn){
   var g='',ys=[4,50,96],xs=[2,50,98],ar=['&#8598;','&#8593;','&#8599;','&#8592;','&#9679;','&#8594;','&#8601;','&#8595;','&#8600;'],n=0;
@@ -1403,14 +1503,14 @@ function panel(){
   filled=false;
   var live=BASE+'?p=/live.m3u8';
   $('app').innerHTML=
-  '<div class="bar"><h1>baba120 Yayın Paneli</h1><span><a href="'+live+'" target="_blank">Yayını Aç</a> <button class="b2" onclick="logout()">Çıkış</button></span></div>'
+  '<div class="bar"><h1>ZemTv Yayın Paneli</h1><span><a href="'+live+'" target="_blank">Yayını Aç</a> <button class="b2" onclick="logout()">Çıkış</button></span></div>'
   +'<div class="card" id="st"></div>'
 
   +'<div class="card"><h2>Film / Dizi Listesi Ekle</h2>'
   +'<input type="text" id="lu" placeholder="Liste adresi (.m3u)">'
   +'<div style="margin-top:8px"><button onclick="importList()">Listeyi Oku</button></div>'
-  +'<label>Veya tek tek / yapıştır</label>'
-  +'<textarea id="ta" placeholder="Film Adı | https://site.com/film.m3u8"></textarea>'
+  +'<label>Veya tek tek / yapıştır (m3u8, mp4, mkv, avi, mov, webm)</label>'
+  +'<textarea id="ta" placeholder="Film Adı | https://site.com/film.m3u8&#10;Film Adı | https://site.com/film.mp4&#10;https://site.com/dizi.mkv"></textarea>'
   +'<button class="b2" onclick="addItems()">Satırları Ekle</button>'
   +'<div id="msg"></div></div>'
 
@@ -1456,7 +1556,7 @@ function panel(){
   +'<button class="b2" onclick="copyTxt($(\'ffc\').value)">Komutu Kopyala</button></div>'
 
   +'<div class="card"><h2>Ayarlar</h2>'
-  +'<label>Kanal adı</label><input type="text" id="cn" placeholder="baba120 TV">'
+  +'<label>Kanal adı</label><input type="text" id="cn" placeholder="ZemTv">'
   +'<label style="display:inline-block;margin-top:12px"><input type="checkbox" id="spx"> Segmentleri proxy üzerinden ver</label><br>'
   +'<label style="display:inline-block"><input type="checkbox" id="sinf"> Film/dizi adı ve bölümü göster</label>'
   +'<div style="margin-top:10px"><button class="green" onclick="saveKeys()">Ayarları Kaydet</button></div></div>';
@@ -1496,7 +1596,7 @@ function drawStatus(){
   }
   h+='<div>'+S.items.length+' yayın &bull; Toplam süre: '+fmt(S.total)+'</div>';
   if(n){
-    h+='<div style="margin-top:8px"><b>'+esc(n.title)+'</b></div>'
+    h+='<div style="margin-top:8px"><b>'+esc(n.title)+'</b>'+(n.direct?'<span class="badge">MP4</span>':'')+'</div>'
     +'<div class="s">'+(n.bolum?esc(n.bolum)+' &bull; ':'')+'Sıra '+n.index+'/'+n.count+' &bull; '+fmt(n.offset)+' / '+fmt(n.duration)+' &bull; <b>%'+n.percent+'</b></div>'
     +'<div class="pb"><i style="width:'+n.percent+'%"></i></div>';
     if(n.next)h+='<div class="s" style="margin-top:6px">Sıradaki: '+esc(n.next)+'</div>';
@@ -1574,10 +1674,12 @@ function drawList(){
     var tm='';
     if(S.running&&S.mode==='seq')tm=hm(base+it.startOffset*1000)+' – '+hm(base+(it.startOffset+it.duration)*1000);
     var lgt=it.logo?(it.logo.on?' &bull; <b class="tm">özel logo</b>':' &bull; <b class="tm">logo gizli</b>'):'';
+    var db=it.direct?' <span class="badge">MP4</span>':'';
+    var sz=it.direct&&it.size?' &bull; '+fmtSize(it.size):'';
     h+='<div class="row'+(i===cur?' cur':(SEL[it.id]?' sel':''))+'">'
     +'<input type="checkbox" '+(SEL[it.id]?'checked':'')+' onchange="selTog(\''+it.id+'\',this.checked)">'
-    +'<div class="n">'+(i+1)+'</div><div class="t"><div>'+esc(it.title)+'</div>'
-    +'<div class="s">'+(it.bolum?esc(it.bolum)+' &bull; ':'')+fmt(it.duration)+(tm?' &bull; <span class="tm">'+tm+'</span>':'')+lgt+(i===cur?' &bull; <b class="on">ŞU AN %'+n.percent+'</b>':'')+'</div>'
+    +'<div class="n">'+(i+1)+'</div><div class="t"><div>'+esc(it.title)+db+'</div>'
+    +'<div class="s">'+(it.bolum?esc(it.bolum)+' &bull; ':'')+fmt(it.duration)+sz+(tm?' &bull; <span class="tm">'+tm+'</span>':'')+lgt+(i===cur?' &bull; <b class="on">ŞU AN %'+n.percent+'</b>':'')+'</div>'
     +(i===cur?'<div class="pb"><i style="width:'+n.percent+'%"></i></div>':'')
     +'</div>'
     +'<input type="time" value="'+esc(it.at)+'" onchange="setAt(\''+it.id+'\',this.value)">'
@@ -1616,7 +1718,7 @@ function openEdit(id){
   EID=id;
   $('modal').innerHTML='<div class="mback"><div class="mbox"><h2>Yayını Düzenle</h2>'
   +'<label>Ad</label><input type="text" id="etitle">'
-  +'<label>Kaynak adresi (m3u8)</label><input type="text" id="eurl">'
+  +'<label>Kaynak adresi (m3u8 / mp4 / mkv)</label><input type="text" id="eurl">'
   +'<label>Oynama saati</label><input type="time" id="eat">'
   +'<div style="margin-top:12px"><button class="green" onclick="saveEdit()">Kaydet</button><button class="b2" onclick="closeModal()">İptal</button></div>'
   +'<div id="emsg" class="s" style="margin-top:8px;color:#fbbf24"></div></div></div>';
@@ -1879,7 +1981,7 @@ init();
 </script></body></html>
 HTML;
 
-/* ============ Router (DÜZELTİLMİŞ) ============ */
+/* ============ Router ============ */
 $__scriptBase = basename($_SERVER['SCRIPT_NAME']);
 $__scriptDir  = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\');
 $__scriptUrl = ($__scriptDir === '' || $__scriptDir === '/' ? '' : $__scriptDir) . '/' . $__scriptBase;
