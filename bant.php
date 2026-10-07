@@ -1,1079 +1,1208 @@
 <?php
 /*
  |=====================================================================
- |  YAYIN PANELİ  -  Tek dosya PHP + FFmpeg (Windows Server 2022 / VDS)
- |  FFmpeg varsayılan yol : C:\ffmpeg\bin\ffmpeg.exe
- |  Varsayılan giriş      : admin / admin123   (giriş yaptıktan sonra değiştirin!)
- |  Kurulum               : Bu dosyayı (index.php) IIS/XAMPP/WAMP klasörüne atın.
- |                          Klasörde "data" ve "hls" klasörleri otomatik oluşur.
+ |  YAYIN PANELİ  -  Tek dosya PHP + FFmpeg yayın yönetimi (Windows)
+ |  Varsayılan giriş:  admin / admin123   (ilk girişte değiştirin!)
+ |
+ |  Gereksinimler : PHP 7.4+  (exec, proc_open açık olmalı)
+ |                  Windows Server + PowerShell + FFmpeg
+ |  FFmpeg yolu   : C:\ffmpeg\bin\ffmpeg.exe  (Ayarlar'dan değiştirilebilir)
+ |
+ |  Otomatik başlatma (sunucu yeniden başlarsa) için Görev Zamanlayıcı:
+ |      php.exe "C:\yol\index.php" watchdog      (her 1 dk ya da açılışta)
  |=====================================================================
 */
 error_reporting(E_ALL);
 ini_set('display_errors', '0');
+@set_time_limit(120);
 date_default_timezone_set('Europe/Istanbul');
-@set_time_limit(60);
 
-define('DS', DIRECTORY_SEPARATOR);
-define('DATA', __DIR__ . DS . 'data');
-define('HLSDIR', __DIR__ . DS . 'hls');
+/* ------------------------- AYARLAR (isteğe bağlı) ------------------- */
+// Veri klasörünü web kökü DIŞINA taşımak daha güvenlidir. Örn: 'C:\\yayin_data'
+define('DATA_DIR', __DIR__ . DIRECTORY_SEPARATOR . 'panel_data');
+// HLS çıktıları web'den erişilebilir olmalı (panel ile aynı klasör altında)
+define('HLS_DIR', __DIR__ . DIRECTORY_SEPARATOR . 'hls');
+define('DEFAULT_FFMPEG', 'C:\\ffmpeg\\bin\\ffmpeg.exe');
 
-/* ---------------------------------------------------------------- klasörler */
-foreach ([DATA, DATA . DS . 'sessions', HLSDIR] as $d) {
-    if (!is_dir($d)) @mkdir($d, 0777, true);
-}
-if (!is_file(DATA . DS . 'web.config')) {
-    @file_put_contents(DATA . DS . 'web.config', '<?xml version="1.0" encoding="UTF-8"?><configuration><system.webServer><security><requestFiltering><fileExtensions allowUnlisted="false" applyToWebDAV="false" /></requestFiltering></security></system.webServer></configuration>');
-}
-if (!is_file(DATA . DS . '.htaccess')) {
-    @file_put_contents(DATA . DS . '.htaccess', "Require all denied\nDeny from all\n");
-}
-if (!is_file(HLSDIR . DS . 'web.config')) {
-    @file_put_contents(HLSDIR . DS . 'web.config', '<?xml version="1.0" encoding="UTF-8"?><configuration><system.webServer><staticContent><remove fileExtension=".m3u8" /><mimeMap fileExtension=".m3u8" mimeType="application/vnd.apple.mpegurl" /><remove fileExtension=".ts" /><mimeMap fileExtension=".ts" mimeType="video/mp2t" /></staticContent><httpProtocol><customHeaders><add name="Access-Control-Allow-Origin" value="*" /><add name="Cache-Control" value="no-cache" /></customHeaders></httpProtocol></system.webServer></configuration>');
-}
-if (!is_file(HLSDIR . DS . '.htaccess')) {
-    @file_put_contents(HLSDIR . DS . '.htaccess', "Header set Access-Control-Allow-Origin \"*\"\nHeader set Cache-Control \"no-cache\"\nAddType application/vnd.apple.mpegurl .m3u8\nAddType video/mp2t .ts\n");
+/* ------------------------- YARDIMCI FONKSİYONLAR -------------------- */
+function wp($p) { return str_replace('/', '\\', $p); }
+
+function ensure_dirs() {
+    foreach ([DATA_DIR, DATA_DIR . '/logos', DATA_DIR . '/run', DATA_DIR . '/logs', HLS_DIR] as $d) {
+        if (!is_dir($d)) @mkdir($d, 0777, true);
+    }
+    $ht = DATA_DIR . '/.htaccess';
+    if (!file_exists($ht)) @file_put_contents($ht, "<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\nDeny from all\n</IfModule>\n");
+    $wc = DATA_DIR . '/web.config';
+    if (!file_exists($wc)) @file_put_contents($wc, '<?xml version="1.0" encoding="UTF-8"?><configuration><system.webServer><security><requestFiltering><fileExtensions allowUnlisted="false" /></requestFiltering></security></system.webServer></configuration>');
+    $hw = HLS_DIR . '/web.config';
+    if (!file_exists($hw)) @file_put_contents($hw, '<?xml version="1.0" encoding="UTF-8"?><configuration><system.webServer><staticContent><remove fileExtension=".m3u8" /><mimeMap fileExtension=".m3u8" mimeType="application/vnd.apple.mpegurl" /><remove fileExtension=".ts" /><mimeMap fileExtension=".ts" mimeType="video/mp2t" /></staticContent><httpProtocol><customHeaders><add name="Access-Control-Allow-Origin" value="*" /><add name="Cache-Control" value="no-cache" /></customHeaders></httpProtocol></system.webServer></configuration>');
+    $ha = HLS_DIR . '/.htaccess';
+    if (!file_exists($ha)) @file_put_contents($ha, "AddType application/vnd.apple.mpegurl .m3u8\nAddType video/mp2t .ts\n<IfModule mod_headers.c>\nHeader set Access-Control-Allow-Origin \"*\"\nHeader set Cache-Control \"no-cache\"\n</IfModule>\n");
 }
 
-/* ------------------------------------------------------------------ oturum */
-if (is_writable(DATA . DS . 'sessions')) session_save_path(DATA . DS . 'sessions');
-session_name('YAYINPANEL');
-session_set_cookie_params(['httponly' => true, 'samesite' => 'Lax']);
-session_start();
-if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
+function db_read($name, $default) {
+    $f = DATA_DIR . "/$name.php";
+    if (!is_file($f)) return $default;
+    $raw = (string)file_get_contents($f);
+    $pos = strpos($raw, "\n");
+    $raw = $pos === false ? '' : substr($raw, $pos + 1);
+    $d = json_decode($raw, true);
+    return is_array($d) ? $d : $default;
+}
+function db_write($name, $data) {
+    $f = DATA_DIR . "/$name.php";
+    $fp = fopen($f, 'c+');
+    flock($fp, LOCK_EX);
+    ftruncate($fp, 0);
+    fwrite($fp, "<?php http_response_code(403); exit; ?>\n" . json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
+    fflush($fp);
+    flock($fp, LOCK_UN);
+    fclose($fp);
+}
 
-/* --------------------------------------------------------------- yardımcılar */
-function p($n) { return DATA . DS . $n; }
-function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
-function fs($s) { return str_replace('\\', '/', $s); }
-function jout($a, $code = 200) {
+function get_config() {
+    $c = db_read('config', []);
+    $def = [
+        'ffmpeg' => DEFAULT_FFMPEG, 'loglevel' => 'warning',
+        'admin_user' => 'admin', 'admin_hash' => password_hash('admin123', PASSWORD_DEFAULT),
+        'pw_changed' => 0, 'next_id' => 1,
+    ];
+    $new = $c + $def;
+    if ($new !== $c) db_write('config', $new);
+    return $new;
+}
+function save_config($c) { db_write('config', $c); }
+
+function stream_defaults() {
+    return [
+        'id' => 0, 'name' => '', 'source' => '', 'output_type' => 'rtmp', 'output_url' => '', 'mode' => 'transcode',
+        'logo' => '', 'logo_pos' => 'tr', 'logo_x' => 10, 'logo_y' => 10, 'logo_margin' => 20, 'logo_width' => 150, 'logo_opacity' => 100,
+        'vcodec' => 'libx264', 'preset' => 'veryfast', 'vbitrate' => 2500, 'resolution' => '', 'fps' => 0,
+        'abitrate' => 128, 'audio_mode' => 'aac',
+        'realtime' => 0, 'reconnect' => 1, 'user_agent' => '', 'extra_in' => '', 'extra_out' => '',
+        'autorestart' => 1, 'hls_time' => 4, 'hls_list' => 6,
+        'desired' => 0, 'pid' => 0, 'started_at' => 0, 'created' => 0,
+    ];
+}
+
+function json_out($d, $code = 200) {
     http_response_code($code);
     header('Content-Type: application/json; charset=utf-8');
-    echo json_encode($a, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
+    echo json_encode($d, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
     exit;
 }
-function iv($v, $min, $max, $def) { if (!is_numeric($v)) return $def; return max($min, min($max, (int)$v)); }
-function clean_str($s) { return preg_replace('/[\x00-\x1F\x7F"]/', '', trim((string)$s)); }
-function hexcol($v, $def) { return preg_match('/^#[0-9a-fA-F]{6}$/', (string)$v) ? strtolower($v) : $def; }
-function pick($v, $arr, $def) { return in_array($v, $arr, true) ? $v : $def; }
-function fix_utf8($s) {
-    if (function_exists('mb_check_encoding') && !mb_check_encoding($s, 'UTF-8')) {
-        $r = @iconv('Windows-1254', 'UTF-8//IGNORE', $s);
-        return $r === false ? utf8_encode($s) : $r;
+function exec_ok() {
+    if (!function_exists('exec')) return false;
+    $dis = array_map('trim', explode(',', (string)ini_get('disable_functions')));
+    return !in_array('exec', $dis, true);
+}
+function is_win() { return stripos(PHP_OS, 'WIN') === 0; }
+
+function pick($v, $allowed, $def) { return in_array($v, $allowed, true) ? $v : $def; }
+function clampi($v, $min, $max, $def) {
+    if (!is_numeric($v)) return $def;
+    return max($min, min($max, (int)$v));
+}
+
+/* batch için güvenli tırnaklama */
+function bq($s) {
+    $s = preg_replace('/[\r\n\x00"]/', '', (string)$s);
+    $s = str_replace('%', '%%', $s);
+    return '"' . $s . '"';
+}
+function split_args($str) {
+    $out = [];
+    if (preg_match_all('/"[^"]*"|\S+/', (string)$str, $m)) {
+        foreach ($m[0] as $t) $out[] = trim($t, '"');
     }
-    return $s;
+    return $out;
 }
-function base_url() {
-    $s = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-    $d = rtrim(fs(dirname($_SERVER['SCRIPT_NAME'])), '/');
-    return $s . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . $d;
+
+function run_proc(array $cmd) {
+    if (PHP_VERSION_ID < 70400) return [-1, '', 'PHP 7.4 veya üzeri gerekli'];
+    $p = @proc_open($cmd, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, null, null, ['bypass_shell' => true]);
+    if (!is_resource($p)) return [-1, '', 'Program başlatılamadı'];
+    fclose($pipes[0]);
+    $out = stream_get_contents($pipes[1]);
+    $err = stream_get_contents($pipes[2]);
+    fclose($pipes[1]); fclose($pipes[2]);
+    $rc = proc_close($p);
+    return [$rc, $out, $err];
 }
-function panel_log($m) {
-    @file_put_contents(p('panel.log'), '[' . date('Y-m-d H:i:s') . '] ' . $m . "\n", FILE_APPEND | LOCK_EX);
+
+function alive_pids() {
+    $o = []; $r = [];
+    @exec('tasklist /FO CSV /NH 2>NUL', $o);
+    foreach ($o as $l) {
+        $c = str_getcsv($l);
+        if (count($c) >= 2 && strtolower($c[0]) === 'cmd.exe') $r[(int)$c[1]] = true;
+    }
+    return $r;
 }
-function tail_file($f, $bytes) {
+
+function stream_update($id, $fields) {
+    $streams = db_read('streams', []);
+    if (!isset($streams[$id])) return;
+    $streams[$id] = $fields + $streams[$id];
+    db_write('streams', $streams);
+}
+
+function with_lock($fn) {
+    $fp = fopen(DATA_DIR . '/run/ops.lock', 'c');
+    flock($fp, LOCK_EX);
+    try { return $fn(); } finally { flock($fp, LOCK_UN); fclose($fp); }
+}
+
+function tail_file($f, $n = 12000) {
     if (!is_file($f)) return '';
-    $fp = @fopen($f, 'rb');
-    if (!$fp) return '';
-    $s = filesize($f);
-    if ($s > $bytes) fseek($fp, -$bytes, SEEK_END);
-    $d = stream_get_contents($fp);
+    $sz = filesize($f);
+    $fp = fopen($f, 'rb');
+    if ($sz > $n) fseek($fp, -$n, SEEK_END);
+    $t = stream_get_contents($fp);
     fclose($fp);
-    return fix_utf8((string)$d);
+    return $t;
 }
 
-/* ------------------------------------------------------------------ ayarlar */
-function defaults() {
-    return [
-        'admin_user' => 'admin',
-        'admin_hash' => password_hash('admin123', PASSWORD_DEFAULT),
-        'pass_default' => true,
-        'ffmpeg_path' => 'C:\\ffmpeg\\bin\\ffmpeg.exe',
-        'input_url' => '',
-        'input_ua' => '',
-        'input_extra' => '',
-        'input_realtime' => 0,
-        'mode' => 'encode',
-        'out_type' => 'rtmp',
-        'out_url' => '',
-        'hls_time' => 4,
-        'hls_list' => 6,
-        'logo_enabled' => 1,
-        'logo_file' => '',
-        'logo_pos' => 'tr',
-        'logo_width' => 160,
-        'logo_opacity' => 100,
-        'logo_margin' => 25,
-        'band_enabled' => 1,
-        'band_text' => 'Canlı yayına hoş geldiniz  •  Bu alana istediğiniz duyuruyu yazabilirsiniz',
-        'band_style' => 'scroll',
-        'band_pos' => 'bottom',
-        'band_height' => 50,
-        'band_font' => 'arial',
-        'band_font_size' => 28,
-        'band_font_color' => '#ffffff',
-        'band_bg_color' => '#b91c1c',
-        'band_bg_opacity' => 85,
-        'band_speed' => 120,
-        'res' => '1280x720',
-        'fps' => 25,
-        'vcodec' => 'libx264',
-        'preset' => 'veryfast',
-        'vbitrate' => 2500,
-        'abitrate' => 128,
-        'gop' => 2,
-        'autorestart' => 1,
-        'restart_delay' => 5,
-    ];
+/* ------------------------- FFMPEG KOMUTU --------------------------- */
+function logo_path($s) {
+    if (!$s['logo']) return '';
+    $p = DATA_DIR . '/logos/' . basename($s['logo']);
+    return is_file($p) ? wp($p) : '';
 }
-function cfg() {
-    $c = defaults();
-    if (is_file(p('config.json'))) {
-        $j = json_decode((string)@file_get_contents(p('config.json')), true);
-        if (is_array($j)) $c = array_merge($c, $j);
+
+function build_args($s, $cfg) {
+    $s += stream_defaults();
+    $a = [$cfg['ffmpeg'], '-hide_banner', '-loglevel', $cfg['loglevel'], '-y'];
+    $src = $s['source'];
+    $isNet = (bool)preg_match('~^https?://~i', $src);
+
+    if ($s['reconnect'] && $isNet) array_push($a, '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
+    if ($s['user_agent'] !== '') array_push($a, '-user_agent', $s['user_agent']);
+    if ($s['realtime']) $a[] = '-re';
+    foreach (split_args($s['extra_in']) as $x) $a[] = $x;
+    array_push($a, '-i', $src);
+
+    $logo = logo_path($s);
+    $hasLogo = $logo !== '';
+    $transcode = ($s['mode'] === 'transcode') || $hasLogo;
+
+    $w = $h = 0;
+    if ($s['resolution'] && preg_match('/^(\d+)x(\d+)$/', $s['resolution'], $m)) { $w = (int)$m[1]; $h = (int)$m[2]; }
+
+    if ($hasLogo) {
+        if (strtolower(pathinfo($logo, PATHINFO_EXTENSION)) === 'gif') array_push($a, '-ignore_loop', '0');
+        else array_push($a, '-loop', '1');
+        array_push($a, '-i', $logo);
+
+        $main = '[0:v]' . ($w ? "scale=$w:$h:force_original_aspect_ratio=decrease,pad=$w:$h:(ow-iw)/2:(oh-ih)/2,setsar=1" : 'null') . '[bg]';
+        $lw = (int)$s['logo_width'];
+        $lg = '[1:v]' . ($lw > 0 ? "scale=$lw:-1," : '') . 'format=rgba';
+        if ((int)$s['logo_opacity'] < 100) $lg .= ',colorchannelmixer=aa=' . round($s['logo_opacity'] / 100, 2);
+        $lg .= '[lg]';
+        $mg = (int)$s['logo_margin'];
+        switch ($s['logo_pos']) {
+            case 'tl': $x = $mg; $y = $mg; break;
+            case 'bl': $x = $mg; $y = "H-h-$mg"; break;
+            case 'br': $x = "W-w-$mg"; $y = "H-h-$mg"; break;
+            case 'c':  $x = '(W-w)/2'; $y = '(H-h)/2'; break;
+            case 'custom': $x = (int)$s['logo_x']; $y = (int)$s['logo_y']; break;
+            default:   $x = "W-w-$mg"; $y = $mg;
+        }
+        $ov = "[bg][lg]overlay=$x:$y:shortest=1[v]";
+        array_push($a, '-filter_complex', "$main;$lg;$ov", '-map', '[v]', '-map', '0:a?');
+    } elseif ($transcode) {
+        if ($w) array_push($a, '-vf', "scale=$w:$h:force_original_aspect_ratio=decrease,pad=$w:$h:(ow-iw)/2:(oh-ih)/2,setsar=1");
+        array_push($a, '-map', '0:v:0?', '-map', '0:a?');
     }
-    return $c;
-}
-function save_cfg($c) {
-    return file_put_contents(p('config.json'), json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
-}
-if (!is_file(p('config.json'))) save_cfg(defaults());
 
-$FONTS = ['arial' => 'arial.ttf', 'arialbd' => 'arialbd.ttf', 'tahoma' => 'tahoma.ttf', 'verdana' => 'verdana.ttf', 'segoeui' => 'segoeui.ttf', 'calibri' => 'calibri.ttf', 'impact' => 'impact.ttf'];
-$RES = ['orig', '1920x1080', '1280x720', '854x480', '640x360'];
-$VC = ['libx264', 'h264_nvenc', 'h264_qsv', 'h264_amf'];
-$PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium'];
-
-function parse_post($post, $old) {
-    global $FONTS, $RES, $VC, $PRESETS;
-    $c = $old;
-    foreach (['ffmpeg_path', 'input_url', 'input_ua', 'input_extra', 'out_url'] as $k) {
-        if (isset($post[$k])) $c[$k] = clean_str($post[$k]);
-    }
-    if ($c['ffmpeg_path'] === '') $c['ffmpeg_path'] = 'C:\\ffmpeg\\bin\\ffmpeg.exe';
-    $c['mode'] = pick($post['mode'] ?? '', ['encode', 'copy'], 'encode');
-    $c['out_type'] = pick($post['out_type'] ?? '', ['rtmp', 'hls', 'mpegts'], 'rtmp');
-    $c['logo_pos'] = pick($post['logo_pos'] ?? '', ['tl', 'tr', 'bl', 'br', 'center'], 'tr');
-    $c['band_style'] = pick($post['band_style'] ?? '', ['scroll', 'static'], 'scroll');
-    $c['band_pos'] = pick($post['band_pos'] ?? '', ['bottom', 'top'], 'bottom');
-    $c['band_font'] = pick($post['band_font'] ?? '', array_keys($FONTS), 'arial');
-    $c['res'] = pick($post['res'] ?? '', $RES, '1280x720');
-    $c['vcodec'] = pick($post['vcodec'] ?? '', $VC, 'libx264');
-    $c['preset'] = pick($post['preset'] ?? '', $PRESETS, 'veryfast');
-    $ints = [
-        'hls_time' => [1, 20, 4], 'hls_list' => [3, 30, 6], 'logo_width' => [20, 1000, 160], 'logo_opacity' => [5, 100, 100],
-        'logo_margin' => [0, 300, 25], 'band_height' => [20, 200, 50], 'band_font_size' => [10, 100, 28], 'band_bg_opacity' => [0, 100, 85],
-        'band_speed' => [20, 600, 120], 'fps' => [0, 60, 25], 'vbitrate' => [200, 20000, 2500], 'abitrate' => [32, 512, 128],
-        'gop' => [1, 10, 2], 'restart_delay' => [1, 120, 5],
-    ];
-    foreach ($ints as $k => $r) $c[$k] = iv($post[$k] ?? null, $r[0], $r[1], $r[2]);
-    foreach (['input_realtime', 'logo_enabled', 'band_enabled', 'autorestart'] as $k) $c[$k] = !empty($post[$k]) ? 1 : 0;
-    $c['band_font_color'] = hexcol($post['band_font_color'] ?? '', '#ffffff');
-    $c['band_bg_color'] = hexcol($post['band_bg_color'] ?? '', '#b91c1c');
-    $t = str_replace(["\r\n", "\r", "\n"], '  •  ', (string)($post['band_text'] ?? ''));
-    $t = preg_replace('/[\x00-\x1F\x7F]/', '', $t);
-    $c['band_text'] = function_exists('mb_substr') ? mb_substr(trim($t), 0, 1500, 'UTF-8') : substr(trim($t), 0, 1500);
-    return $c;
-}
-function write_band($c) {
-    @file_put_contents(p('band.txt'), $c['band_text']);
-}
-
-/* ------------------------------------------------------------- süreç yönetimi */
-function pid_alive($pid) {
-    $pid = (int)$pid;
-    if ($pid <= 0 || !function_exists('exec')) return false;
-    $o = [];
-    @exec('tasklist /FI "PID eq ' . $pid . '" /FO CSV /NH 2>NUL', $o);
-    return strpos(implode("\n", $o), '"' . $pid . '"') !== false;
-}
-function read_pid($f) {
-    $s = @file_get_contents(p($f));
-    return $s ? (int)preg_replace('/\D/', '', $s) : 0;
-}
-function launch($cmd) {
-    if (class_exists('COM')) {
-        try { $sh = new COM('WScript.Shell'); $sh->Run($cmd, 0, false); return true; } catch (Throwable $e) {}
-    }
-    $d = [0 => ['file', 'NUL', 'r'], 1 => ['file', 'NUL', 'w'], 2 => ['file', 'NUL', 'w']];
-    $pr = @proc_open('cmd /c start "" /B ' . $cmd, $d, $pipes);
-    if (is_resource($pr)) { proc_close($pr); return true; }
-    return false;
-}
-function q($a) {
-    if ($a === '') return '""';
-    if (preg_match('/^[A-Za-z0-9_\-\.\/:@+=%]+$/', $a)) return $a;
-    return '"' . str_replace('"', '\\"', $a) . '"';
-}
-
-function build_args($c, &$err) {
-    global $FONTS;
-    $err = '';
-    $in = $c['input_url'];
-    if ($in === '') { $err = 'Kaynak (giriş) linki boş.'; return []; }
-    $a = ['-hide_banner', '-y', '-stats_period', '3'];
-    if (preg_match('~^https?://~i', $in)) {
-        array_push($a, '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_at_eof', '1', '-reconnect_delay_max', '5');
-    }
-    if ($c['input_ua'] !== '') array_push($a, '-user_agent', $c['input_ua']);
-    if ($c['input_realtime']) $a[] = '-re';
-    if ($c['input_extra'] !== '') foreach (preg_split('/\s+/', $c['input_extra']) as $x) if ($x !== '') $a[] = $x;
-    array_push($a, '-i', $in);
-
-    if ($c['mode'] === 'copy') {
+    if ($transcode) {
+        $vb = (int)$s['vbitrate'];
+        array_push($a, '-c:v', $s['vcodec']);
+        if ($s['vcodec'] === 'libx264') array_push($a, '-preset', $s['preset'], '-sc_threshold', '0');
+        array_push($a, '-pix_fmt', 'yuv420p', '-b:v', $vb . 'k', '-maxrate', $vb . 'k', '-bufsize', ($vb * 2) . 'k');
+        $fps = (int)$s['fps'];
+        if ($fps > 0) array_push($a, '-r', (string)$fps);
+        array_push($a, '-g', (string)(($fps > 0 ? $fps : 30) * 2));
+        if ($s['audio_mode'] === 'aac') array_push($a, '-c:a', 'aac', '-b:a', (int)$s['abitrate'] . 'k', '-ar', '44100', '-ac', '2');
+        elseif ($s['audio_mode'] === 'copy') array_push($a, '-c:a', 'copy');
+        else $a[] = '-an';
+    } else {
         array_push($a, '-c', 'copy');
-    } else {
-        $useLogo = $c['logo_enabled'] && $c['logo_file'] && is_file(p($c['logo_file']));
-        $useBand = $c['band_enabled'] && trim($c['band_text']) !== '';
-        if ($useLogo) array_push($a, '-i', $c['logo_file']); // çalışma dizini = data
-
-        $vf = [];
-        if ($c['res'] !== 'orig') {
-            list($w, $hh) = explode('x', $c['res']);
-            $vf[] = "scale=$w:$hh:force_original_aspect_ratio=decrease";
-            $vf[] = "pad=$w:$hh:(ow-iw)/2:(oh-ih)/2";
-            $vf[] = 'setsar=1';
-        }
-        if ($c['fps'] > 0) $vf[] = 'fps=' . $c['fps'];
-        if ($useBand) {
-            $bh = (int)$c['band_height'];
-            $op = number_format($c['band_bg_opacity'] / 100, 2, '.', '');
-            $bgc = '0x' . substr($c['band_bg_color'], 1);
-            $fc = '0x' . substr($c['band_font_color'], 1);
-            $by = $c['band_pos'] === 'top' ? '0' : "ih-$bh";
-            $vf[] = "drawbox=x=0:y=$by:w=iw:h=$bh:color=$bgc@$op:t=fill";
-            $ty = $c['band_pos'] === 'top' ? "($bh-text_h)/2" : "h-$bh+($bh-text_h)/2";
-            $tx = $c['band_style'] === 'scroll' ? "w-mod(t*{$c['band_speed']},w+text_w)" : "(w-text_w)/2";
-            $vf[] = "drawtext=fontfile=font.ttf:textfile=band.txt:reload=1:expansion=none:fontsize={$c['band_font_size']}:fontcolor=$fc:shadowcolor=black@0.5:shadowx=1:shadowy=1:x='$tx':y='$ty'";
-        }
-        if (!$vf) $vf[] = 'null';
-        $graph = '[0:v:0]' . implode(',', $vf);
-        if ($useLogo) {
-            $m = (int)$c['logo_margin'];
-            $pos = ['tl' => "x=$m:y=$m", 'tr' => "x=W-w-$m:y=$m", 'bl' => "x=$m:y=H-h-$m", 'br' => "x=W-w-$m:y=H-h-$m", 'center' => 'x=(W-w)/2:y=(H-h)/2'][$c['logo_pos']];
-            $lg = '[1:v]scale=' . (int)$c['logo_width'] . ':-1,format=rgba';
-            if ($c['logo_opacity'] < 100) $lg .= ',colorchannelmixer=aa=' . number_format($c['logo_opacity'] / 100, 2, '.', '');
-            $graph .= '[bg];' . $lg . '[lg];[bg][lg]overlay=' . $pos . ',format=yuv420p[v]';
-        } else {
-            $graph .= ',format=yuv420p[v]';
-        }
-        array_push($a, '-filter_complex', $graph, '-map', '[v]', '-map', '0:a:0?');
-
-        $fpsOut = $c['fps'] > 0 ? $c['fps'] : 25;
-        $vb = (int)$c['vbitrate'];
-        switch ($c['vcodec']) {
-            case 'h264_nvenc': array_push($a, '-c:v', 'h264_nvenc', '-preset', 'p4', '-profile:v', 'main'); break;
-            case 'h264_qsv':   array_push($a, '-c:v', 'h264_qsv', '-preset', 'veryfast'); break;
-            case 'h264_amf':   array_push($a, '-c:v', 'h264_amf', '-quality', 'speed'); break;
-            default:           array_push($a, '-c:v', 'libx264', '-preset', $c['preset'], '-profile:v', 'main', '-sc_threshold', '0');
-        }
-        array_push($a, '-b:v', $vb . 'k', '-maxrate', $vb . 'k', '-bufsize', ($vb * 2) . 'k', '-g', (string)($fpsOut * $c['gop']));
-        array_push($a, '-c:a', 'aac', '-b:a', $c['abitrate'] . 'k', '-ar', '44100', '-ac', '2');
     }
 
-    if ($c['out_type'] === 'hls') {
-        $d = fs(HLSDIR);
-        array_push($a, '-f', 'hls', '-hls_time', (string)$c['hls_time'], '-hls_list_size', (string)$c['hls_list'],
-            '-hls_flags', 'delete_segments+independent_segments+omit_endlist', '-hls_segment_filename', $d . '/seg_%05d.ts', $d . '/stream.m3u8');
-    } else {
-        if ($c['out_url'] === '') { $err = 'Çıkış (yayın) linki boş.'; return []; }
-        array_push($a, '-f', $c['out_type'] === 'rtmp' ? 'flv' : 'mpegts', $c['out_url']);
+    foreach (split_args($s['extra_out']) as $x) $a[] = $x;
+
+    switch ($s['output_type']) {
+        case 'hls':
+            $dir = HLS_DIR . '/' . $s['id'];
+            array_push($a, '-f', 'hls', '-hls_time', (string)(int)$s['hls_time'], '-hls_list_size', (string)(int)$s['hls_list'],
+                '-hls_flags', 'delete_segments+omit_endlist',
+                '-hls_segment_filename', wp($dir . '/seg_%05d.ts'), wp($dir . '/index.m3u8'));
+            break;
+        case 'mpegts': array_push($a, '-f', 'mpegts', $s['output_url']); break;
+        case 'custom': $a[] = $s['output_url']; break;
+        default:       array_push($a, '-f', 'flv', $s['output_url']);
     }
     return $a;
 }
 
-function write_runner($c) {
-    $tpl = <<<'PS'
-$ErrorActionPreference = 'Continue'
-$base = '{{BASE}}'
-$auto = {{AUTO}}
-$delay = {{DELAY}}
-function Log($m) { Add-Content -Path "$base\panel.log" -Value ("[{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m) -Encoding ASCII }
-Set-Content -Path "$base\runner.pid" -Value $PID -Encoding ASCII
-$ff = [IO.File]::ReadAllText("$base\ffpath.txt").Trim()
-$n = 0
-while ($true) {
-  $n++
-  $a = [IO.File]::ReadAllText("$base\args.txt").Trim()
-  Log "FFmpeg baslatiliyor (deneme #$n)"
-  $code = -1
-  try {
-    $p = Start-Process -FilePath $ff -ArgumentList $a -WorkingDirectory $base -WindowStyle Hidden -PassThru -RedirectStandardError "$base\ffmpeg.log"
-    $null = $p.Handle
-    Set-Content -Path "$base\ffmpeg.pid" -Value $p.Id -Encoding ASCII
-    $p.WaitForExit()
-    $code = $p.ExitCode
-  } catch { Log ("Hata: " + $_.Exception.Message) }
-  Remove-Item "$base\ffmpeg.pid" -ErrorAction SilentlyContinue
-  if (Test-Path "$base\stop.flag") { Log "Yayin kullanici tarafindan durduruldu"; break }
-  try { Get-Content "$base\ffmpeg.log" -Tail 4 | ForEach-Object { Log ("  > " + $_) } } catch {}
-  if (-not $auto) { Log "FFmpeg durdu (kod $code). Otomatik yeniden baslatma kapali."; break }
-  Log "FFmpeg durdu (kod $code). $delay sn sonra yeniden baslatilacak."
-  Start-Sleep -Seconds $delay
-  if (Test-Path "$base\stop.flag") { break }
-}
-Remove-Item "$base\runner.pid" -ErrorAction SilentlyContinue
-PS;
-    $ps = str_replace(['{{BASE}}', '{{AUTO}}', '{{DELAY}}'], [str_replace("'", "''", DATA), $c['autorestart'] ? '$true' : '$false', (int)$c['restart_delay']], $tpl);
-    return file_put_contents(p('runner.ps1'), $ps);
+/* ------------------------- BAŞLAT / DURDUR ------------------------- */
+function launch_detached($bat, $id) {
+    $ps = wp(DATA_DIR . '/run/launch_' . $id . '.ps1');
+    $cl = 'cmd.exe /c ""' . $bat . '""';
+    $q = function ($t) { return str_replace("'", "''", $t); };
+    $script = "\$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = '" . $q($cl) . "'; CurrentDirectory = '" . $q(dirname($bat)) . "' }\r\n"
+        . "if (\$r.ReturnValue -ne 0) { Write-Output ('ERR:' + \$r.ReturnValue) } else { Write-Output ('PID:' + \$r.ProcessId) }\r\n";
+    file_put_contents($ps, $script);
+    $out = [];
+    exec('powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' . $ps . '" 2>&1', $out, $rc);
+    $txt = implode("\n", $out);
+    if (preg_match('/PID:(\d+)/', $txt, $m)) return (int)$m[1];
+    throw new Exception('İşlem başlatılamadı. PowerShell çıktısı: ' . trim($txt));
 }
 
-function get_status() {
-    $c = cfg();
-    $r = read_pid('runner.pid');
-    $f = read_pid('ffmpeg.pid');
-    $ra = pid_alive($r);
-    $fa = $ra && $f && pid_alive($f);
-    if (!$ra && is_file(p('runner.pid'))) { @unlink(p('runner.pid')); @unlink(p('ffmpeg.pid')); }
-    $st = json_decode((string)@file_get_contents(p('state.json')), true) ?: [];
-    $uptime = ($fa && !empty($st['started'])) ? time() - (int)$st['started'] : 0;
-    $log = tail_file(p('ffmpeg.log'), 30000);
-    $lines = array_values(array_filter(preg_split('/[\r\n]+/', $log), 'strlen'));
-    $stats = ['fps' => '-', 'bitrate' => '-', 'speed' => '-', 'time' => '-', 'size' => '-'];
-    for ($i = count($lines) - 1; $i >= 0; $i--) {
-        if (preg_match('/(frame|size)=.*speed=/', $lines[$i])) {
-            $l = $lines[$i];
-            if (preg_match('/fps=\s*([\d\.]+)/', $l, $m)) $stats['fps'] = $m[1];
-            if (preg_match('/bitrate=\s*(\S+)/', $l, $m)) $stats['bitrate'] = $m[1];
-            if (preg_match('/speed=\s*(\S+)/', $l, $m)) $stats['speed'] = $m[1];
-            if (preg_match('/time=\s*(\S+)/', $l, $m)) $stats['time'] = $m[1];
-            if (preg_match('/size=\s*(\S+)/', $l, $m)) $stats['size'] = $m[1];
-            break;
+function stream_start($id) {
+    $streams = db_read('streams', []);
+    if (!isset($streams[$id])) throw new Exception('Yayın bulunamadı');
+    $s = $streams[$id] + stream_defaults();
+    $s['id'] = (int)$id;
+    $cfg = get_config();
+    if (!is_win()) throw new Exception('Bu panel Windows sunucular için hazırlanmıştır.');
+    if (!exec_ok()) throw new Exception('PHP exec() fonksiyonu kapalı (disable_functions).');
+    if (!is_file($cfg['ffmpeg'])) throw new Exception('FFmpeg bulunamadı: ' . $cfg['ffmpeg']);
+    $alive = alive_pids();
+    if ($s['pid'] && isset($alive[(int)$s['pid']])) return;
+
+    $log = DATA_DIR . '/logs/stream_' . $id . '.log';
+    file_put_contents($log, '');
+    if ($s['output_type'] === 'hls') {
+        $d = HLS_DIR . '/' . $id;
+        if (is_dir($d)) { foreach (glob($d . '/*') as $f) @unlink($f); } else @mkdir($d, 0777, true);
+    }
+
+    $args = build_args($s, $cfg);
+    $line = implode(' ', array_map('bq', $args));
+    $bat = wp(DATA_DIR . '/run/stream_' . $id . '.bat');
+    $logw = wp($log);
+    $b  = "@echo off\r\nchcp 65001 >nul\r\ntitle YayinPanel_" . (int)$id . "\r\ncd /d " . bq(wp(DATA_DIR)) . "\r\n";
+    $b .= ":loop\r\n";
+    $b .= "echo [%date% %time%] FFmpeg baslatiliyor... >> " . bq($logw) . "\r\n";
+    $b .= $line . " 2>> " . bq($logw) . "\r\n";
+    $b .= "set RC=%errorlevel%\r\n";
+    $b .= "echo [%date% %time%] FFmpeg durdu (kod: %RC%) >> " . bq($logw) . "\r\n";
+    if ($s['autorestart']) {
+        $b .= "ping 127.0.0.1 -n 6 >nul\r\ngoto loop\r\n";
+    } else {
+        $b .= "exit /b %RC%\r\n";
+    }
+    file_put_contents($bat, $b);
+
+    $pid = launch_detached($bat, $id);
+    stream_update($id, ['desired' => 1, 'pid' => $pid, 'started_at' => time()]);
+}
+
+function stream_stop($id) {
+    $streams = db_read('streams', []);
+    if (!isset($streams[$id])) return;
+    $pid = (int)$streams[$id]['pid'];
+    stream_update($id, ['desired' => 0, 'pid' => 0, 'started_at' => 0]);
+    if ($pid) {
+        $alive = alive_pids();
+        if (isset($alive[$pid])) @exec('taskkill /PID ' . $pid . ' /T /F 2>&1');
+    }
+}
+
+function watchdog() {
+    $fp = fopen(DATA_DIR . '/run/ops.lock', 'c');
+    if (!flock($fp, LOCK_EX | LOCK_NB)) { fclose($fp); return; }
+    try {
+        $streams = db_read('streams', []);
+        $alive = null;
+        foreach ($streams as $id => $s) {
+            if (empty($s['desired'])) continue;
+            if ($alive === null) $alive = alive_pids();
+            if (!empty($s['pid']) && isset($alive[(int)$s['pid']])) continue;
+            if (!empty($s['autorestart'])) {
+                try { stream_start((int)$id); } catch (Exception $e) { @file_put_contents(DATA_DIR . '/logs/stream_' . $id . '.log', '[' . date('c') . '] ' . $e->getMessage() . "\n", FILE_APPEND); }
+            } else {
+                stream_update($id, ['desired' => 0, 'pid' => 0, 'started_at' => 0]);
+            }
         }
-    }
-    $plog = tail_file(p('panel.log'), 6000);
-    $plines = array_values(array_filter(preg_split('/[\r\n]+/', ltrim($plog, "\xEF\xBB\xBF")), 'strlen'));
-    return [
-        'ok' => true,
-        'state' => $fa ? 'running' : ($ra ? 'waiting' : 'stopped'),
-        'runner' => $r, 'ffmpeg' => $f, 'uptime' => $uptime,
-        'stats' => $stats,
-        'log' => array_slice($lines, -40),
-        'panel_log' => array_slice($plines, -14),
-        'hls_url' => base_url() . '/hls/stream.m3u8',
-    ];
+    } finally { flock($fp, LOCK_UN); fclose($fp); }
 }
 
-function start_stream() {
-    $c = cfg();
-    if (!function_exists('exec')) return ['ok' => false, 'msg' => 'PHP exec() fonksiyonu kapalı (disable_functions). php.ini dosyasından açın.'];
-    if (DS !== '\\') return ['ok' => false, 'msg' => 'Bu panel Windows sunucu için yazılmıştır.'];
-    $s = get_status();
-    if ($s['state'] !== 'stopped') return ['ok' => false, 'msg' => 'Yayın zaten çalışıyor.'];
-    if (!is_file($c['ffmpeg_path'])) return ['ok' => false, 'msg' => 'FFmpeg bulunamadı: ' . $c['ffmpeg_path']];
-    $args = build_args($c, $err);
-    if ($err) return ['ok' => false, 'msg' => $err];
-
-    // yazı tipini data klasörüne kopyala (filtrelerde göreli yol kullanmak için)
-    global $FONTS;
-    $win = getenv('WINDIR') ?: 'C:\\Windows';
-    $src = $win . '\\Fonts\\' . $FONTS[$c['band_font']];
-    if (is_file($src)) @copy($src, p('font.ttf'));
-    elseif ($c['mode'] === 'encode' && $c['band_enabled']) return ['ok' => false, 'msg' => 'Yazı tipi bulunamadı: ' . $src];
-    write_band($c);
-
-    if ($c['out_type'] === 'hls') {
-        foreach (glob(HLSDIR . DS . '*.{ts,m3u8}', GLOB_BRACE) ?: [] as $f) @unlink($f);
-    }
-    file_put_contents(p('args.txt'), implode(' ', array_map('q', $args)));
-    file_put_contents(p('ffpath.txt'), $c['ffmpeg_path']);
-    file_put_contents(p('ffmpeg.log'), '');
-    @unlink(p('stop.flag'));
-    @unlink(p('runner.pid'));
-    @unlink(p('ffmpeg.pid'));
-    write_runner($c);
-    file_put_contents(p('state.json'), json_encode(['started' => time()]));
-    panel_log('Yayın başlatma komutu verildi.');
-    $cmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' . p('runner.ps1') . '"';
-    if (!launch($cmd)) return ['ok' => false, 'msg' => 'İşlem başlatılamadı (COM/proc_open kapalı olabilir).'];
-    for ($i = 0; $i < 8; $i++) { usleep(500000); if (read_pid('ffmpeg.pid')) break; }
-    $s = get_status();
-    return ['ok' => $s['state'] !== 'stopped', 'msg' => $s['state'] !== 'stopped' ? 'Yayın başlatıldı.' : 'Yayın başlamadı. Log bölümünü kontrol edin.'];
+function remove_stream_files($id, $s) {
+    if (!empty($s['logo'])) @unlink(DATA_DIR . '/logos/' . basename($s['logo']));
+    @unlink(DATA_DIR . '/run/stream_' . $id . '.bat');
+    @unlink(DATA_DIR . '/run/launch_' . $id . '.ps1');
+    @unlink(DATA_DIR . '/logs/stream_' . $id . '.log');
+    $d = HLS_DIR . '/' . $id;
+    if (is_dir($d)) { foreach (glob($d . '/*') as $f) @unlink($f); @rmdir($d); }
 }
 
-function stop_stream() {
-    @file_put_contents(p('stop.flag'), '1');
-    $r = read_pid('runner.pid');
-    $f = read_pid('ffmpeg.pid');
-    if ($r) @exec('taskkill /F /T /PID ' . $r . ' 2>NUL');
-    if ($f) @exec('taskkill /F /T /PID ' . $f . ' 2>NUL');
-    @unlink(p('runner.pid'));
-    @unlink(p('ffmpeg.pid'));
-    panel_log('Yayın durduruldu (panelden).');
-    return ['ok' => true, 'msg' => 'Yayın durduruldu.'];
+/* ------------------------- BAŞLANGIÇ ------------------------------- */
+ensure_dirs();
+$CFG = get_config();
+
+if (PHP_SAPI === 'cli') {
+    $cmd = isset($argv[1]) ? $argv[1] : '';
+    if ($cmd === 'watchdog') { watchdog(); echo "OK\n"; }
+    else echo "Kullanim: php index.php watchdog\n";
+    exit;
 }
 
-/* ===================================================================== GİRİŞ */
-$authed = !empty($_SESSION['auth']);
-$cfgNow = cfg();
+session_set_cookie_params(['httponly' => true, 'samesite' => 'Lax', 'lifetime' => 0]);
+session_name('YAYINPANEL');
+session_start();
+if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16));
 
-if (isset($_GET['logout'])) {
+$a = isset($_GET['a']) ? $_GET['a'] : '';
+
+/* --- Çıkış --- */
+if ($a === 'logout') {
     $_SESSION = [];
     session_destroy();
     header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
     exit;
 }
 
-if (!$authed && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login_user'])) {
-    $ok = hash_equals($cfgNow['admin_user'], (string)$_POST['login_user']) && password_verify((string)($_POST['login_pass'] ?? ''), $cfgNow['admin_hash']);
-    if ($ok) {
+/* --- Giriş --- */
+$loginError = '';
+if (empty($_SESSION['auth']) && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login_user'])) {
+    $u = (string)$_POST['login_user'];
+    $p = (string)($_POST['login_pass'] ?? '');
+    if (hash_equals($CFG['admin_user'], $u) && password_verify($p, $CFG['admin_hash'])) {
         session_regenerate_id(true);
-        $_SESSION['auth'] = true;
+        $_SESSION['auth'] = 1;
         $_SESSION['csrf'] = bin2hex(random_bytes(16));
         header('Location: ' . strtok($_SERVER['REQUEST_URI'], '?'));
         exit;
     }
     sleep(1);
-    $loginErr = 'Kullanıcı adı veya şifre hatalı.';
+    $loginError = 'Kullanıcı adı veya şifre hatalı.';
 }
 
-if (!$authed) {
-    if (isset($_GET['api'])) jout(['ok' => false, 'msg' => 'Oturum yok'], 401);
+if (empty($_SESSION['auth'])) {
+    if ($a !== '') json_out(['error' => 'auth'], 401);
     ?><!DOCTYPE html>
-<html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Yayın Paneli · Giriş</title>
+<html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Yayın Paneli - Giriş</title>
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
-</head>
-<body class="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4" style="background-image:radial-gradient(circle at 20% 10%,#312e8180,transparent 40%),radial-gradient(circle at 80% 90%,#0f766e60,transparent 40%)">
-<form method="post" class="w-full max-w-sm bg-slate-900/80 backdrop-blur border border-slate-800 rounded-2xl p-8 shadow-2xl">
-    <div class="flex items-center gap-3 mb-6">
-        <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-xl">📡</div>
-        <div><h1 class="text-xl font-bold">Yayın Paneli</h1><p class="text-xs text-slate-400">FFmpeg yönetim sistemi</p></div>
-    </div>
-    <?php if (!empty($loginErr)): ?><div class="mb-4 text-sm bg-red-500/10 border border-red-500/40 text-red-300 rounded-lg px-3 py-2"><?= h($loginErr) ?></div><?php endif; ?>
-    <label class="block text-xs text-slate-400 mb-1">Kullanıcı adı</label>
-    <input name="login_user" autofocus required class="w-full mb-4 rounded-lg bg-slate-950 border border-slate-700 px-3 py-2.5 focus:outline-none focus:border-indigo-500">
-    <label class="block text-xs text-slate-400 mb-1">Şifre</label>
-    <input name="login_pass" type="password" required class="w-full mb-6 rounded-lg bg-slate-950 border border-slate-700 px-3 py-2.5 focus:outline-none focus:border-indigo-500">
-    <button class="w-full py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 font-semibold transition">Giriş Yap</button>
+<style>body{background:radial-gradient(circle at 20% 10%,#1e1b4b 0,#070b14 45%)}
+.inp{width:100%;background:#0d1424;border:1px solid #243049;border-radius:.7rem;padding:.7rem .9rem;color:#e5e9f5;outline:none}
+.inp:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.25)}</style></head>
+<body class="min-h-screen flex items-center justify-center p-4 text-slate-200">
+<form method="post" class="w-full max-w-sm bg-[#0e1526]/90 border border-[#1d2840] rounded-2xl p-8 shadow-2xl">
+  <div class="text-center mb-6">
+    <div class="mx-auto w-14 h-14 rounded-2xl bg-indigo-600 flex items-center justify-center text-2xl mb-3">📡</div>
+    <h1 class="text-xl font-bold">Yayın Paneli</h1>
+    <p class="text-sm text-slate-400">Yönetici girişi</p>
+  </div>
+  <?php if ($loginError): ?><div class="mb-4 text-sm bg-rose-500/10 border border-rose-500/30 text-rose-300 rounded-lg px-3 py-2"><?= htmlspecialchars($loginError) ?></div><?php endif; ?>
+  <label class="text-xs text-slate-400">Kullanıcı adı</label>
+  <input class="inp mb-4 mt-1" name="login_user" autofocus autocomplete="username" required>
+  <label class="text-xs text-slate-400">Şifre</label>
+  <input class="inp mb-6 mt-1" type="password" name="login_pass" autocomplete="current-password" required>
+  <button class="w-full bg-indigo-600 hover:bg-indigo-500 transition rounded-xl py-3 font-semibold">Giriş Yap</button>
 </form></body></html>
 <?php
     exit;
 }
 
-/* ====================================================================== API */
-if (isset($_GET['api'])) {
-    $api = $_GET['api'];
+/* --- Giriş yapılmış: oturum kilidini bırak --- */
+$csrf = $_SESSION['csrf'];
+session_write_close();
 
-    if ($api === 'logo') { // logo önizleme (GET)
-        $f = $cfgNow['logo_file'];
-        if ($f && is_file(p($f))) {
-            $mime = ['png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'gif' => 'image/gif', 'webp' => 'image/webp'][strtolower(pathinfo($f, PATHINFO_EXTENSION))] ?? 'application/octet-stream';
-            header('Content-Type: ' . $mime);
-            header('Cache-Control: no-store');
-            readfile(p($f));
-        } else { http_response_code(404); }
-        exit;
+/* ------------------------- API ------------------------------------- */
+if ($a !== '') {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $tok = isset($_SERVER['HTTP_X_CSRF']) ? $_SERVER['HTTP_X_CSRF'] : '';
+        if (!hash_equals($csrf, $tok)) json_out(['error' => 'Güvenlik doğrulaması başarısız, sayfayı yenileyin.'], 403);
     }
-    if ($api === 'status') jout(get_status());
+    try {
+        switch ($a) {
 
-    // buradan sonrası POST + CSRF
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST') jout(['ok' => false, 'msg' => 'Geçersiz istek'], 405);
-    if (!hash_equals($_SESSION['csrf'], $_SERVER['HTTP_X_CSRF'] ?? '')) jout(['ok' => false, 'msg' => 'Güvenlik anahtarı geçersiz, sayfayı yenileyin.'], 403);
+            case 'list':
+                watchdog();
+                $streams = db_read('streams', []);
+                $alive = alive_pids();
+                $out = [];
+                foreach ($streams as $id => $s) {
+                    $s += stream_defaults();
+                    $run = $s['pid'] && isset($alive[(int)$s['pid']]);
+                    $s['running'] = $run;
+                    $s['state'] = $run ? 'running' : ($s['desired'] ? 'down' : 'stopped');
+                    $s['uptime'] = $run ? max(0, time() - (int)$s['started_at']) : 0;
+                    $s['logo_url'] = $s['logo'] ? '?a=logo&id=' . $id . '&v=' . substr(md5($s['logo']), 0, 6) : '';
+                    $s['hls_path'] = $s['output_type'] === 'hls' ? 'hls/' . $id . '/index.m3u8' : '';
+                    $out[] = $s;
+                }
+                usort($out, function ($x, $y) { return $x['id'] <=> $y['id']; });
+                $cfg = get_config();
+                json_out([
+                    'streams' => $out,
+                    'config' => ['ffmpeg' => $cfg['ffmpeg'], 'loglevel' => $cfg['loglevel'], 'admin_user' => $cfg['admin_user']],
+                    'env' => [
+                        'os_ok' => is_win(), 'exec_ok' => exec_ok(), 'ffmpeg_ok' => is_file($cfg['ffmpeg']),
+                        'default_pw' => !$cfg['pw_changed'], 'php' => PHP_VERSION,
+                    ],
+                ]);
 
-    switch ($api) {
-        case 'save':
-            $c = parse_post($_POST, $cfgNow);
-            save_cfg($c);
-            write_band($c); // çalışan yayında bant metni canlı güncellenir
-            jout(['ok' => true, 'msg' => 'Ayarlar kaydedildi.', 'cfg' => $c]);
+            case 'save':
+                $id = (int)($_POST['id'] ?? 0);
+                $streams = db_read('streams', []);
+                if ($id) {
+                    if (!isset($streams[$id])) json_out(['error' => 'Yayın bulunamadı'], 404);
+                    $s = $streams[$id] + stream_defaults();
+                } else {
+                    $cfg = get_config();
+                    $id = (int)$cfg['next_id'];
+                    $cfg['next_id'] = $id + 1;
+                    save_config($cfg);
+                    $s = stream_defaults();
+                    $s['id'] = $id;
+                    $s['created'] = time();
+                }
+                $t = function ($k) { return trim(preg_replace('/[\r\n\x00]/', '', (string)($_POST[$k] ?? ''))); };
+                $s['name'] = mb_substr($t('name'), 0, 80);
+                $s['source'] = $t('source');
+                $s['output_type'] = pick($t('output_type'), ['rtmp', 'hls', 'mpegts', 'custom'], 'rtmp');
+                $s['output_url'] = $t('output_url');
+                $s['mode'] = pick($t('mode'), ['transcode', 'copy'], 'transcode');
+                $s['logo_pos'] = pick($t('logo_pos'), ['tl', 'tr', 'bl', 'br', 'c', 'custom'], 'tr');
+                $s['logo_x'] = clampi($t('logo_x'), -5000, 5000, 10);
+                $s['logo_y'] = clampi($t('logo_y'), -5000, 5000, 10);
+                $s['logo_margin'] = clampi($t('logo_margin'), 0, 2000, 20);
+                $s['logo_width'] = clampi($t('logo_width'), 0, 3000, 150);
+                $s['logo_opacity'] = clampi($t('logo_opacity'), 0, 100, 100);
+                $s['vcodec'] = pick($t('vcodec'), ['libx264', 'h264_nvenc', 'h264_qsv', 'h264_amf'], 'libx264');
+                $s['preset'] = pick($t('preset'), ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium'], 'veryfast');
+                $s['vbitrate'] = clampi($t('vbitrate'), 100, 50000, 2500);
+                $s['resolution'] = pick($t('resolution'), ['', '1920x1080', '1280x720', '854x480', '640x360'], '');
+                $s['fps'] = clampi($t('fps'), 0, 120, 0);
+                $s['abitrate'] = clampi($t('abitrate'), 32, 512, 128);
+                $s['audio_mode'] = pick($t('audio_mode'), ['aac', 'copy', 'none'], 'aac');
+                $s['hls_time'] = clampi($t('hls_time'), 1, 20, 4);
+                $s['hls_list'] = clampi($t('hls_list'), 2, 50, 6);
+                $s['user_agent'] = $t('user_agent');
+                $s['extra_in'] = $t('extra_in');
+                $s['extra_out'] = $t('extra_out');
+                foreach (['realtime', 'reconnect', 'autorestart'] as $k) $s[$k] = isset($_POST[$k]) ? 1 : 0;
 
-        case 'start': jout(start_stream());
-        case 'stop': jout(stop_stream());
-        case 'restart':
-            stop_stream();
-            sleep(2);
-            jout(start_stream());
+                if ($s['name'] === '') json_out(['error' => 'Yayın adı gerekli'], 422);
+                if ($s['source'] === '') json_out(['error' => 'Kaynak (yayın linki) gerekli'], 422);
+                if ($s['output_type'] !== 'hls' && $s['output_url'] === '') json_out(['error' => 'Çıkış adresi gerekli'], 422);
 
-        case 'cmd':
-            $args = build_args($cfgNow, $err);
-            if ($err) jout(['ok' => false, 'msg' => $err]);
-            jout(['ok' => true, 'cmd' => '"' . $cfgNow['ffmpeg_path'] . '" ' . implode(' ', array_map('q', $args))]);
+                // Logo
+                if (!empty($_POST['remove_logo']) && $s['logo']) {
+                    @unlink(DATA_DIR . '/logos/' . basename($s['logo']));
+                    $s['logo'] = '';
+                }
+                if (!empty($_FILES['logo']) && $_FILES['logo']['error'] === UPLOAD_ERR_OK) {
+                    $f = $_FILES['logo'];
+                    $ext = strtolower(pathinfo($f['name'], PATHINFO_EXTENSION));
+                    if (!in_array($ext, ['png', 'jpg', 'jpeg', 'gif', 'webp'], true)) json_out(['error' => 'Logo yalnızca png, jpg, gif veya webp olabilir'], 422);
+                    if ($f['size'] > 5 * 1024 * 1024) json_out(['error' => 'Logo en fazla 5 MB olabilir'], 422);
+                    if (!@getimagesize($f['tmp_name'])) json_out(['error' => 'Geçersiz görsel dosyası'], 422);
+                    $name = 'logo_' . $id . '_' . bin2hex(random_bytes(3)) . '.' . $ext;
+                    if (!move_uploaded_file($f['tmp_name'], DATA_DIR . '/logos/' . $name)) json_out(['error' => 'Logo kaydedilemedi (klasör yazma izni?)'], 500);
+                    if ($s['logo']) @unlink(DATA_DIR . '/logos/' . basename($s['logo']));
+                    $s['logo'] = $name;
+                }
 
-        case 'logo_upload':
-            if (empty($_FILES['logo']) || $_FILES['logo']['error'] !== UPLOAD_ERR_OK) jout(['ok' => false, 'msg' => 'Dosya yüklenemedi (php.ini upload_max_filesize kontrol edin).']);
-            $f = $_FILES['logo'];
-            if ($f['size'] > 8 * 1024 * 1024) jout(['ok' => false, 'msg' => 'Dosya 8 MB üstünde olamaz.']);
-            $info = @getimagesize($f['tmp_name']);
-            $map = [IMAGETYPE_PNG => 'png', IMAGETYPE_JPEG => 'jpg', IMAGETYPE_GIF => 'gif', IMAGETYPE_WEBP => 'webp'];
-            if (!$info || !isset($map[$info[2]])) jout(['ok' => false, 'msg' => 'Sadece PNG, JPG, GIF, WEBP kabul edilir.']);
-            foreach (glob(DATA . DS . 'logo.*') ?: [] as $old) @unlink($old);
-            $name = 'logo.' . $map[$info[2]];
-            if (!move_uploaded_file($f['tmp_name'], p($name))) jout(['ok' => false, 'msg' => 'Dosya kaydedilemedi (klasör yazma izni).']);
-            $cfgNow['logo_file'] = $name;
-            save_cfg($cfgNow);
-            jout(['ok' => true, 'msg' => 'Logo yüklendi. (Yayın açıksa yeniden başlatın)', 'file' => $name]);
+                $streams = db_read('streams', []);
+                $streams[$id] = $s;
+                db_write('streams', $streams);
+                $alive = alive_pids();
+                json_out(['ok' => true, 'id' => $id, 'running' => ($s['pid'] && isset($alive[(int)$s['pid']]))]);
 
-        case 'logo_delete':
-            foreach (glob(DATA . DS . 'logo.*') ?: [] as $old) @unlink($old);
-            $cfgNow['logo_file'] = '';
-            save_cfg($cfgNow);
-            jout(['ok' => true, 'msg' => 'Logo silindi.']);
+            case 'start':
+                $id = (int)($_POST['id'] ?? 0);
+                with_lock(function () use ($id) { stream_start($id); });
+                json_out(['ok' => true]);
 
-        case 'test':
-            $ff = $cfgNow['ffmpeg_path'];
-            if (!is_file($ff)) jout(['ok' => false, 'msg' => 'Dosya yok: ' . $ff]);
-            $o = []; @exec('"' . $ff . '" -hide_banner -version 2>&1', $o);
-            $ver = $o[0] ?? 'Sürüm okunamadı';
-            $o = []; @exec('"' . $ff . '" -hide_banner -filters 2>&1', $o);
-            $drawtext = strpos(implode("\n", $o), 'drawtext') !== false;
-            $overlay = strpos(implode("\n", $o), ' overlay ') !== false;
-            $o = []; @exec('"' . $ff . '" -hide_banner -encoders 2>&1', $o);
-            $enc = implode("\n", $o);
-            jout(['ok' => true, 'version' => $ver, 'drawtext' => $drawtext, 'overlay' => $overlay,
-                'libx264' => strpos($enc, 'libx264') !== false, 'nvenc' => strpos($enc, 'h264_nvenc') !== false,
-                'qsv' => strpos($enc, 'h264_qsv') !== false, 'amf' => strpos($enc, 'h264_amf') !== false]);
+            case 'stop':
+                $id = (int)($_POST['id'] ?? 0);
+                with_lock(function () use ($id) { stream_stop($id); });
+                json_out(['ok' => true]);
 
-        case 'password':
-            $u = clean_str($_POST['new_user'] ?? '');
-            $cur = (string)($_POST['cur_pass'] ?? '');
-            $new = (string)($_POST['new_pass'] ?? '');
-            if (!password_verify($cur, $cfgNow['admin_hash'])) jout(['ok' => false, 'msg' => 'Mevcut şifre yanlış.']);
-            if (strlen($new) < 6) jout(['ok' => false, 'msg' => 'Yeni şifre en az 6 karakter olmalı.']);
-            if ($u === '') $u = $cfgNow['admin_user'];
-            $cfgNow['admin_user'] = $u;
-            $cfgNow['admin_hash'] = password_hash($new, PASSWORD_DEFAULT);
-            $cfgNow['pass_default'] = false;
-            save_cfg($cfgNow);
-            jout(['ok' => true, 'msg' => 'Giriş bilgileri güncellendi.']);
+            case 'restart':
+                $id = (int)($_POST['id'] ?? 0);
+                with_lock(function () use ($id) { stream_stop($id); sleep(1); stream_start($id); });
+                json_out(['ok' => true]);
+
+            case 'delete':
+                $id = (int)($_POST['id'] ?? 0);
+                with_lock(function () use ($id) {
+                    $streams = db_read('streams', []);
+                    if (!isset($streams[$id])) return;
+                    stream_stop($id);
+                    $s = $streams[$id];
+                    unset($streams[$id]);
+                    db_write('streams', $streams);
+                    remove_stream_files($id, $s);
+                });
+                json_out(['ok' => true]);
+
+            case 'log':
+                $id = (int)($_GET['id'] ?? 0);
+                $streams = db_read('streams', []);
+                if (!isset($streams[$id])) json_out(['error' => 'Yayın bulunamadı'], 404);
+                $s = $streams[$id] + stream_defaults();
+                $s['id'] = $id;
+                $cfg = get_config();
+                $args = build_args($s, $cfg);
+                $cmdline = implode(' ', array_map(function ($x) { return preg_match('/[\s&|;()]/', $x) ? '"' . $x . '"' : $x; }, $args));
+                json_out(['log' => tail_file(DATA_DIR . '/logs/stream_' . $id . '.log'), 'cmd' => $cmdline]);
+
+            case 'clearlog':
+                $id = (int)($_POST['id'] ?? 0);
+                @file_put_contents(DATA_DIR . '/logs/stream_' . $id . '.log', '');
+                json_out(['ok' => true]);
+
+            case 'logo':
+                $id = (int)($_GET['id'] ?? 0);
+                $streams = db_read('streams', []);
+                if (!isset($streams[$id]) || !$streams[$id]['logo']) { http_response_code(404); exit; }
+                $p = DATA_DIR . '/logos/' . basename($streams[$id]['logo']);
+                if (!is_file($p)) { http_response_code(404); exit; }
+                $mimes = ['png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'gif' => 'image/gif', 'webp' => 'image/webp'];
+                $ext = strtolower(pathinfo($p, PATHINFO_EXTENSION));
+                header('Content-Type: ' . (isset($mimes[$ext]) ? $mimes[$ext] : 'application/octet-stream'));
+                header('Cache-Control: private, max-age=3600');
+                readfile($p);
+                exit;
+
+            case 'probe':
+                $src = trim((string)($_POST['source'] ?? ''));
+                if ($src === '') json_out(['error' => 'Kaynak adresi boş'], 422);
+                $cfg = get_config();
+                $probe = dirname($cfg['ffmpeg']) . DIRECTORY_SEPARATOR . 'ffprobe.exe';
+                if (!is_file($probe)) json_out(['error' => 'ffprobe.exe bulunamadı: ' . $probe], 422);
+                $cmd = [$probe, '-v', 'error', '-rw_timeout', '10000000'];
+                $ua = trim((string)($_POST['user_agent'] ?? ''));
+                if ($ua !== '' && preg_match('~^https?://~i', $src)) { $cmd[] = '-user_agent'; $cmd[] = $ua; }
+                array_push($cmd, '-show_entries', 'stream=index,codec_type,codec_name,width,height,r_frame_rate,bit_rate,sample_rate,channels', '-of', 'json', $src);
+                list($rc, $o, $e) = run_proc($cmd);
+                $j = json_decode($o, true);
+                if (!$j || empty($j['streams'])) json_out(['ok' => false, 'message' => 'Kaynağa erişilemedi veya akış bulunamadı. ' . trim(mb_substr($e, 0, 400))]);
+                $lines = [];
+                foreach ($j['streams'] as $st) {
+                    if (($st['codec_type'] ?? '') === 'video') {
+                        $fr = '';
+                        if (!empty($st['r_frame_rate']) && strpos($st['r_frame_rate'], '/') !== false) {
+                            list($n, $d) = explode('/', $st['r_frame_rate']);
+                            if ((float)$d > 0) $fr = ' ' . round($n / $d, 2) . ' fps';
+                        }
+                        $lines[] = 'Video: ' . ($st['codec_name'] ?? '?') . ' ' . ($st['width'] ?? '?') . 'x' . ($st['height'] ?? '?') . $fr;
+                    } elseif (($st['codec_type'] ?? '') === 'audio') {
+                        $lines[] = 'Ses: ' . ($st['codec_name'] ?? '?') . ' ' . ($st['sample_rate'] ?? '?') . ' Hz, ' . ($st['channels'] ?? '?') . ' kanal';
+                    }
+                }
+                json_out(['ok' => true, 'message' => implode(' | ', $lines)]);
+
+            case 'test_ffmpeg':
+                $path = trim((string)($_POST['ffmpeg'] ?? ''), " \t\"");
+                if (!is_file($path)) json_out(['ok' => false, 'message' => 'Dosya bulunamadı: ' . $path]);
+                list($rc, $o, $e) = run_proc([$path, '-hide_banner', '-version']);
+                $first = trim(strtok($o, "\n"));
+                if ($first === '') json_out(['ok' => false, 'message' => 'FFmpeg çalıştırılamadı. ' . trim($e)]);
+                list($rc2, $enc) = run_proc([$path, '-hide_banner', '-encoders']);
+                $have = [];
+                foreach (['libx264', 'h264_nvenc', 'h264_qsv', 'h264_amf'] as $en) if (strpos($enc, ' ' . $en . ' ') !== false) $have[] = $en;
+                json_out(['ok' => true, 'message' => $first . ' — Kodlayıcılar: ' . ($have ? implode(', ', $have) : 'bulunamadı')]);
+
+            case 'settings':
+                $cfg = get_config();
+                $ff = trim((string)($_POST['ffmpeg'] ?? ''), " \t\"");
+                if ($ff === '') $ff = DEFAULT_FFMPEG;
+                $cfg['ffmpeg'] = $ff;
+                $cfg['loglevel'] = pick((string)($_POST['loglevel'] ?? ''), ['error', 'warning', 'info', 'verbose'], 'warning');
+                $np = (string)($_POST['new_pass'] ?? '');
+                $nu = trim((string)($_POST['new_user'] ?? ''));
+                if ($np !== '' || ($nu !== '' && $nu !== $cfg['admin_user'])) {
+                    if (!password_verify((string)($_POST['cur_pass'] ?? ''), $cfg['admin_hash'])) json_out(['error' => 'Mevcut şifre hatalı'], 422);
+                    if ($nu !== '') $cfg['admin_user'] = mb_substr($nu, 0, 40);
+                    if ($np !== '') {
+                        if (strlen($np) < 6) json_out(['error' => 'Yeni şifre en az 6 karakter olmalı'], 422);
+                        $cfg['admin_hash'] = password_hash($np, PASSWORD_DEFAULT);
+                        $cfg['pw_changed'] = 1;
+                    }
+                }
+                save_config($cfg);
+                json_out(['ok' => true]);
+
+            case 'sysinfo':
+                $php = dirname(PHP_BINARY) . DIRECTORY_SEPARATOR . 'php.exe';
+                json_out(['php' => $php, 'script' => __FILE__]);
+
+            default:
+                json_out(['error' => 'Bilinmeyen işlem'], 404);
+        }
+    } catch (Throwable $e) {
+        json_out(['error' => $e->getMessage()], 500);
     }
-    jout(['ok' => false, 'msg' => 'Bilinmeyen işlem'], 400);
+    exit;
 }
 
-/* ===================================================================== PANEL */
-$sys = [
-    'php' => PHP_VERSION,
-    'os' => php_uname('s') . ' ' . php_uname('r'),
-    'exec' => function_exists('exec'),
-    'com' => class_exists('COM'),
-    'user' => get_current_user(),
-    'writable' => is_writable(DATA),
-    'upload' => ini_get('upload_max_filesize'),
-];
+$phpExe = dirname(PHP_BINARY) . DIRECTORY_SEPARATOR . 'php.exe';
 ?><!DOCTYPE html>
 <html lang="tr">
 <head>
-<meta charset="utf-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Yayın Paneli</title>
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 <style>
-    body{background:#020617;background-image:radial-gradient(circle at 15% 0%,#312e8155,transparent 40%),radial-gradient(circle at 90% 100%,#0f766e40,transparent 40%);background-attachment:fixed}
-    .card{background:rgba(15,23,42,.8);border:1px solid #1e293b;border-radius:1rem;padding:1.25rem}
-    .lbl{display:block;font-size:.72rem;color:#94a3b8;margin-bottom:.3rem;font-weight:500}
-    .inp{width:100%;border-radius:.5rem;background:#020617;border:1px solid #334155;padding:.5rem .75rem;font-size:.875rem;color:#f1f5f9;outline:none}
-    .inp:focus{border-color:#6366f1}
-    select.inp{padding-right:.5rem}
-    input[type=color].inp{padding:.2rem;height:2.3rem}
-    .hint{font-size:.7rem;color:#64748b;margin-top:.25rem}
-    .btn{display:inline-flex;align-items:center;gap:.4rem;padding:.55rem 1rem;border-radius:.6rem;font-size:.85rem;font-weight:600;transition:.15s;cursor:pointer}
-    .btn:disabled{opacity:.4;cursor:not-allowed}
-    .tab{padding:.5rem .9rem;border-radius:.6rem;font-size:.82rem;color:#94a3b8;cursor:pointer;white-space:nowrap;border:1px solid transparent}
-    .tab:hover{color:#e2e8f0}
-    .tab.active{background:#4f46e5;color:#fff}
-    .tabp{display:none}.tabp.active{display:block}
-    .term{background:#020617;border:1px solid #1e293b;border-radius:.6rem;padding:.75rem;font:12px/1.5 Consolas,monospace;color:#86efac;height:15rem;overflow:auto;white-space:pre-wrap;word-break:break-all}
-    @keyframes mq{from{transform:translateX(100%)}to{transform:translateX(-100%)}}
-    .mq{display:inline-block;white-space:nowrap;animation:mq 12s linear infinite}
-    @keyframes pulse2{0%,100%{opacity:1}50%{opacity:.35}}
-    .live{animation:pulse2 1.2s infinite}
-    .sw{position:relative;width:2.6rem;height:1.4rem;flex:none}
-    .sw input{opacity:0;position:absolute;inset:0;z-index:2;cursor:pointer;width:100%;height:100%;margin:0}
-    .sw span{position:absolute;inset:0;background:#334155;border-radius:999px;transition:.2s}
-    .sw span:after{content:"";position:absolute;width:1.05rem;height:1.05rem;left:.18rem;top:.17rem;background:#fff;border-radius:50%;transition:.2s}
-    .sw input:checked+span{background:#10b981}
-    .sw input:checked+span:after{transform:translateX(1.2rem)}
+:root{color-scheme:dark}
+body{background:radial-gradient(circle at 15% 0,#1a1745 0,#070b14 40%);min-height:100vh;color:#dfe5f5;font-family:ui-sans-serif,system-ui,"Segoe UI",sans-serif}
+.inp{width:100%;background:#0b1222;border:1px solid #243049;border-radius:.6rem;padding:.5rem .7rem;color:#e5e9f5;font-size:.85rem;outline:none}
+.inp:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.2)}
+.inp:disabled{opacity:.45}
+.lbl{display:block;font-size:.72rem;color:#93a0bd;margin-bottom:.25rem;font-weight:500}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:.35rem;padding:.45rem .8rem;border-radius:.6rem;font-size:.78rem;font-weight:600;transition:.15s;cursor:pointer;border:1px solid transparent;white-space:nowrap}
+.btn:disabled{opacity:.5;cursor:wait}
+.btn-pri{background:#6366f1;color:#fff}.btn-pri:hover{background:#4f46e5}
+.btn-ok{background:#059669;color:#fff}.btn-ok:hover{background:#047857}
+.btn-warn{background:#d97706;color:#fff}.btn-warn:hover{background:#b45309}
+.btn-danger{background:#be123c;color:#fff}.btn-danger:hover{background:#9f1239}
+.btn-ghost{background:#121a2e;border-color:#243049;color:#cbd5f1}.btn-ghost:hover{background:#1b2640}
+.card{background:linear-gradient(180deg,#0f1729,#0c1322);border:1px solid #1d2840;border-radius:1rem}
+.modal-bg{position:fixed;inset:0;background:rgba(2,6,15,.78);backdrop-filter:blur(4px);display:none;align-items:flex-start;justify-content:center;overflow:auto;padding:1.5rem 1rem;z-index:50}
+.modal-bg.open{display:flex}
+.modal{background:#0d1426;border:1px solid #243049;border-radius:1.1rem;width:100%;box-shadow:0 25px 60px rgba(0,0,0,.6)}
+.tab{padding:.5rem .9rem;font-size:.8rem;border-radius:.6rem;color:#93a0bd;cursor:pointer;font-weight:600}
+.tab.active{background:#1e2547;color:#c7d2fe}
+.dot{width:.55rem;height:.55rem;border-radius:9999px;display:inline-block}
+.pulse{animation:pl 1.4s infinite}
+@keyframes pl{0%{box-shadow:0 0 0 0 rgba(16,185,129,.6)}70%{box-shadow:0 0 0 7px rgba(16,185,129,0)}100%{box-shadow:0 0 0 0 rgba(16,185,129,0)}}
+pre.log{background:#050912;border:1px solid #1d2840;border-radius:.6rem;padding:.7rem;font-size:.72rem;line-height:1.4;max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-all;color:#a7f3d0}
+.sw{display:flex;align-items:center;gap:.5rem;font-size:.82rem;color:#cbd5f1;cursor:pointer}
+.sw input{accent-color:#6366f1;width:1rem;height:1rem}
+#toasts{position:fixed;right:1rem;bottom:1rem;z-index:100;display:flex;flex-direction:column;gap:.5rem}
+.toast{padding:.65rem .9rem;border-radius:.7rem;font-size:.82rem;max-width:360px;box-shadow:0 10px 30px rgba(0,0,0,.5);animation:ti .25s}
+@keyframes ti{from{opacity:0;transform:translateY(8px)}to{opacity:1}}
 </style>
 </head>
-<body class="text-slate-100 min-h-screen">
-<div class="max-w-7xl mx-auto p-4 md:p-6">
+<body>
 
-    <!-- Üst bar -->
-    <header class="flex flex-wrap items-center justify-between gap-3 mb-5">
-        <div class="flex items-center gap-3">
-            <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-xl">📡</div>
-            <div><h1 class="text-xl font-bold leading-tight">Yayın Paneli</h1><p class="text-xs text-slate-400">FFmpeg · Logo · Alt Bant · Canlı Yayın</p></div>
-        </div>
-        <div class="flex items-center gap-3">
-            <span class="text-xs text-slate-400 hidden sm:inline">👤 <?= h($cfgNow['admin_user']) ?></span>
-            <a href="?logout=1" class="btn bg-slate-800 hover:bg-slate-700 text-slate-200">Çıkış</a>
-        </div>
-    </header>
-
-    <?php if (!empty($cfgNow['pass_default'])): ?>
-    <div class="mb-4 text-sm bg-amber-500/10 border border-amber-500/40 text-amber-200 rounded-xl px-4 py-3">
-        ⚠️ Varsayılan şifre (<b>admin / admin123</b>) kullanılıyor. Lütfen <b>Sistem</b> sekmesinden değiştirin.
+<header class="border-b border-[#1d2840] bg-[#0a1020]/70 backdrop-blur sticky top-0 z-30">
+  <div class="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
+    <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-xl">📡</div>
+    <div class="mr-auto">
+      <h1 class="font-bold leading-tight">Yayın Paneli</h1>
+      <p class="text-[11px] text-slate-400">FFmpeg • Logo • Canlı yayın yönetimi</p>
     </div>
-    <?php endif; ?>
+    <button class="btn btn-ghost" onclick="openSettings()">⚙ Ayarlar</button>
+    <button class="btn btn-pri" onclick="openForm(0)">＋ Yeni Yayın</button>
+    <a class="btn btn-ghost" href="?a=logout">Çıkış</a>
+  </div>
+</header>
 
-    <!-- Kontrol kartı -->
-    <section class="card mb-5">
-        <div class="flex flex-wrap items-center justify-between gap-4">
-            <div class="flex items-center gap-4">
-                <div id="pill" class="px-4 py-2 rounded-full bg-slate-800 text-slate-300 text-sm font-bold flex items-center gap-2">
-                    <span id="dot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span><span id="pillTxt">Kontrol ediliyor…</span>
-                </div>
-                <div class="text-sm text-slate-400">Süre: <span id="uptime" class="text-slate-100 font-mono">00:00:00</span></div>
-            </div>
-            <div class="flex flex-wrap gap-2">
-                <button id="bSave" class="btn bg-slate-700 hover:bg-slate-600">💾 Kaydet</button>
-                <button id="bStart" class="btn bg-emerald-600 hover:bg-emerald-500">▶ Yayını Başlat</button>
-                <button id="bRestart" class="btn bg-amber-600 hover:bg-amber-500">⟲ Yeniden Başlat</button>
-                <button id="bStop" class="btn bg-red-600 hover:bg-red-500">■ Durdur</button>
-            </div>
-        </div>
-        <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4">
-            <div class="bg-slate-950 rounded-lg p-3 border border-slate-800"><div class="text-[11px] text-slate-500">FPS</div><div id="sFps" class="font-mono text-lg">-</div></div>
-            <div class="bg-slate-950 rounded-lg p-3 border border-slate-800"><div class="text-[11px] text-slate-500">Bitrate</div><div id="sBr" class="font-mono text-lg">-</div></div>
-            <div class="bg-slate-950 rounded-lg p-3 border border-slate-800"><div class="text-[11px] text-slate-500">Hız</div><div id="sSp" class="font-mono text-lg">-</div></div>
-            <div class="bg-slate-950 rounded-lg p-3 border border-slate-800"><div class="text-[11px] text-slate-500">Yayın zamanı</div><div id="sTm" class="font-mono text-lg">-</div></div>
-            <div class="bg-slate-950 rounded-lg p-3 border border-slate-800 col-span-2 md:col-span-1"><div class="text-[11px] text-slate-500">Gönderilen</div><div id="sSz" class="font-mono text-lg">-</div></div>
-        </div>
-    </section>
+<main class="max-w-7xl mx-auto px-4 py-6">
+  <div id="warns" class="space-y-2 mb-4"></div>
 
-    <div class="grid lg:grid-cols-3 gap-5">
-        <!-- Sol: sekmeler -->
-        <div class="lg:col-span-2">
-            <nav class="flex gap-1 overflow-x-auto pb-2 mb-3" id="tabs">
-                <div class="tab active" data-t="log">📊 Durum & Log</div>
-                <div class="tab" data-t="src">🔗 Kaynak & Çıkış</div>
-                <div class="tab" data-t="logo">🖼 Logo</div>
-                <div class="tab" data-t="band">📰 Alt Bant</div>
-                <div class="tab" data-t="enc">⚙ Kodlama</div>
-                <div class="tab" data-t="sys">🛠 Sistem</div>
-            </nav>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6" id="stats"></div>
 
-            <form id="cfg" onsubmit="return false">
-                <!-- LOG -->
-                <div class="tabp active card" id="t-log">
-                    <div class="flex items-center justify-between mb-2">
-                        <h2 class="font-semibold">FFmpeg Çıktısı</h2>
-                        <span class="text-xs text-slate-500">Her 3 sn yenilenir</span>
-                    </div>
-                    <div id="log" class="term">Henüz log yok.</div>
-                    <h2 class="font-semibold mt-4 mb-2">Panel Olayları</h2>
-                    <div id="plog" class="term" style="height:9rem;color:#fcd34d">-</div>
+  <div id="list" class="grid grid-cols-1 lg:grid-cols-2 gap-4"></div>
+  <div id="empty" class="hidden card p-10 text-center text-slate-400">
+    <div class="text-4xl mb-2">🎬</div>
+    Henüz yayın yok. <button class="text-indigo-400 underline" onclick="openForm(0)">İlk yayını oluştur</button>
+  </div>
+</main>
 
-                    <div id="hlsBox" class="mt-4 hidden">
-                        <div class="flex flex-wrap items-center gap-2 mb-2">
-                            <h2 class="font-semibold">HLS Yayın Linki</h2>
-                            <input id="hlsUrl" readonly class="inp flex-1 font-mono text-xs min-w-[12rem]">
-                            <button type="button" id="bCopy" class="btn bg-slate-700 hover:bg-slate-600">Kopyala</button>
-                            <button type="button" id="bPlay" class="btn bg-indigo-600 hover:bg-indigo-500">▶ İzle</button>
-                        </div>
-                        <video id="vid" controls muted class="w-full rounded-lg bg-black hidden aspect-video"></video>
-                    </div>
-
-                    <div class="mt-4">
-                        <button type="button" id="bCmd" class="btn bg-slate-800 hover:bg-slate-700">🔍 FFmpeg komutunu göster</button>
-                        <pre id="cmdOut" class="term mt-2 hidden" style="height:auto;max-height:12rem;color:#a5b4fc"></pre>
-                    </div>
-                </div>
-
-                <!-- KAYNAK & ÇIKIŞ -->
-                <div class="tabp card space-y-4" id="t-src">
-                    <h2 class="font-semibold">Kaynak (Giriş)</h2>
-                    <div>
-                        <label class="lbl">Kaynak yayın linki (m3u8, rtmp, http, udp, srt, mp4 …)</label>
-                        <input name="input_url" class="inp font-mono" placeholder="http://ornek.com/canli/index.m3u8">
-                    </div>
-                    <div class="grid sm:grid-cols-2 gap-4">
-                        <div><label class="lbl">User-Agent (isteğe bağlı)</label><input name="input_ua" class="inp" placeholder="VLC/3.0.18 LibVLC/3.0.18"></div>
-                        <div><label class="lbl">Ek giriş parametreleri (isteğe bağlı)</label><input name="input_extra" class="inp font-mono" placeholder="-rw_timeout 15000000"></div>
-                    </div>
-                    <label class="flex items-center gap-3 text-sm"><span class="sw"><input type="checkbox" name="input_realtime"><span></span></span> Gerçek zamanlı oku (<code class="text-indigo-300">-re</code>) — sadece dosya/mp4 kaynaklar için</label>
-
-                    <hr class="border-slate-800">
-                    <h2 class="font-semibold">Çıkış (Yayın)</h2>
-                    <div class="grid sm:grid-cols-2 gap-4">
-                        <div>
-                            <label class="lbl">Çıkış türü</label>
-                            <select name="out_type" class="inp">
-                                <option value="rtmp">RTMP (YouTube, Facebook, Nginx-RTMP…)</option>
-                                <option value="hls">HLS (bu sunucudan m3u8 yayını)</option>
-                                <option value="mpegts">MPEG-TS (udp:// srt:// tcp://)</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="lbl">Çalışma modu</label>
-                            <select name="mode" class="inp">
-                                <option value="encode">Yeniden kodla (Logo + Bant aktif)</option>
-                                <option value="copy">Kopyala (CPU yok, logo/bant YOK)</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div id="outUrlWrap">
-                        <label class="lbl">Çıkış linki</label>
-                        <input name="out_url" class="inp font-mono" placeholder="rtmp://a.rtmp.youtube.com/live2/XXXX-XXXX-XXXX">
-                        <p class="hint">RTMP için yayın anahtarıyla birlikte tam adresi yazın.</p>
-                    </div>
-                    <div id="hlsOpts" class="grid grid-cols-2 gap-4">
-                        <div><label class="lbl">HLS parça süresi (sn)</label><input type="number" name="hls_time" class="inp"></div>
-                        <div><label class="lbl">Liste uzunluğu (parça)</label><input type="number" name="hls_list" class="inp"></div>
-                        <p class="hint col-span-2">HLS seçilirse yayın <code>/hls/stream.m3u8</code> adresinde yayınlanır (IIS’de otomatik MIME ayarı eklenir).</p>
-                    </div>
-                </div>
-
-                <!-- LOGO -->
-                <div class="tabp card space-y-4" id="t-logo">
-                    <div class="flex items-center justify-between">
-                        <h2 class="font-semibold">Logo Ayarları</h2>
-                        <label class="flex items-center gap-2 text-sm"><span class="sw"><input type="checkbox" name="logo_enabled"><span></span></span> Logo aktif</label>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-4 p-3 rounded-xl border border-dashed border-slate-700 bg-slate-950">
-                        <div class="w-28 h-20 rounded-lg bg-[repeating-conic-gradient(#1e293b_0_25%,#0f172a_0_50%)] bg-[length:16px_16px] flex items-center justify-center overflow-hidden">
-                            <img id="logoThumb" class="max-w-full max-h-full hidden" alt="">
-                            <span id="logoNone" class="text-xs text-slate-500">Logo yok</span>
-                        </div>
-                        <div class="flex-1 min-w-[12rem]">
-                            <input type="file" id="logoFile" accept="image/png,image/jpeg,image/gif,image/webp" class="text-xs text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-indigo-600 file:px-3 file:py-2 file:text-white file:cursor-pointer">
-                            <p class="hint">PNG (şeffaf) önerilir. En fazla 8 MB. Yükleme limiti: <?= h($sys['upload']) ?></p>
-                        </div>
-                        <button type="button" id="bLogoDel" class="btn bg-slate-800 hover:bg-red-600/80">Sil</button>
-                    </div>
-                    <div class="grid sm:grid-cols-2 gap-4">
-                        <div>
-                            <label class="lbl">Konum</label>
-                            <select name="logo_pos" class="inp">
-                                <option value="tl">Sol üst</option><option value="tr">Sağ üst</option>
-                                <option value="bl">Sol alt</option><option value="br">Sağ alt</option>
-                                <option value="center">Orta</option>
-                            </select>
-                        </div>
-                        <div><label class="lbl">Genişlik (px)</label><input type="number" name="logo_width" class="inp"></div>
-                        <div><label class="lbl">Şeffaflık (% görünürlük)</label><input type="range" min="5" max="100" name="logo_opacity" class="w-full accent-indigo-500"></div>
-                        <div><label class="lbl">Kenar boşluğu (px)</label><input type="number" name="logo_margin" class="inp"></div>
-                    </div>
-                    <p class="hint">Logo değişikliklerinin yayına yansıması için yayını yeniden başlatın.</p>
-                </div>
-
-                <!-- BAND -->
-                <div class="tabp card space-y-4" id="t-band">
-                    <div class="flex items-center justify-between">
-                        <h2 class="font-semibold">Alt Bant (Yazı Bandı)</h2>
-                        <label class="flex items-center gap-2 text-sm"><span class="sw"><input type="checkbox" name="band_enabled"><span></span></span> Bant aktif</label>
-                    </div>
-                    <div>
-                        <label class="lbl">Bant metni</label>
-                        <textarea name="band_text" rows="3" class="inp"></textarea>
-                        <p class="hint">✅ <b>Canlı güncelleme:</b> Yayın açıkken sadece metni değiştirip “Kaydet / Bandı Güncelle” derseniz yayın kesilmeden yazı değişir.</p>
-                    </div>
-                    <button type="button" id="bBand" class="btn bg-fuchsia-600 hover:bg-fuchsia-500">📰 Bandı Güncelle</button>
-                    <div class="grid sm:grid-cols-3 gap-4">
-                        <div><label class="lbl">Stil</label><select name="band_style" class="inp"><option value="scroll">Kayan yazı</option><option value="static">Sabit (ortalı)</option></select></div>
-                        <div><label class="lbl">Konum</label><select name="band_pos" class="inp"><option value="bottom">Alt</option><option value="top">Üst</option></select></div>
-                        <div><label class="lbl">Yazı tipi</label>
-                            <select name="band_font" class="inp"><option value="arial">Arial</option><option value="arialbd">Arial Kalın</option><option value="tahoma">Tahoma</option><option value="verdana">Verdana</option><option value="segoeui">Segoe UI</option><option value="calibri">Calibri</option><option value="impact">Impact</option></select></div>
-                        <div><label class="lbl">Bant yüksekliği (px)</label><input type="number" name="band_height" class="inp"></div>
-                        <div><label class="lbl">Yazı boyutu (px)</label><input type="number" name="band_font_size" class="inp"></div>
-                        <div><label class="lbl">Kayma hızı (px/sn)</label><input type="number" name="band_speed" class="inp"></div>
-                        <div><label class="lbl">Yazı rengi</label><input type="color" name="band_font_color" class="inp"></div>
-                        <div><label class="lbl">Bant rengi</label><input type="color" name="band_bg_color" class="inp"></div>
-                        <div><label class="lbl">Bant opaklığı (%)</label><input type="range" min="0" max="100" name="band_bg_opacity" class="w-full accent-indigo-500 mt-2"></div>
-                    </div>
-                    <p class="hint">Yazı tipi, renk, boyut gibi değişiklikler için yayını yeniden başlatmanız gerekir.</p>
-                </div>
-
-                <!-- ENCODE -->
-                <div class="tabp card space-y-4" id="t-enc">
-                    <h2 class="font-semibold">Kodlama Ayarları</h2>
-                    <p class="hint">Sadece “Yeniden kodla” modunda geçerlidir.</p>
-                    <div class="grid sm:grid-cols-2 gap-4">
-                        <div><label class="lbl">Çözünürlük</label>
-                            <select name="res" class="inp"><option value="orig">Orijinal</option><option value="1920x1080">1920x1080 (Full HD)</option><option value="1280x720">1280x720 (HD)</option><option value="854x480">854x480</option><option value="640x360">640x360</option></select></div>
-                        <div><label class="lbl">FPS (0 = orijinal)</label><input type="number" name="fps" class="inp"></div>
-                        <div><label class="lbl">Video kodlayıcı</label>
-                            <select name="vcodec" class="inp"><option value="libx264">libx264 (CPU)</option><option value="h264_nvenc">h264_nvenc (NVIDIA)</option><option value="h264_qsv">h264_qsv (Intel)</option><option value="h264_amf">h264_amf (AMD)</option></select></div>
-                        <div><label class="lbl">x264 hız ön ayarı</label>
-                            <select name="preset" class="inp"><option>ultrafast</option><option>superfast</option><option>veryfast</option><option>faster</option><option>fast</option><option>medium</option></select></div>
-                        <div><label class="lbl">Video bitrate (kbps)</label><input type="number" name="vbitrate" class="inp"></div>
-                        <div><label class="lbl">Ses bitrate (kbps)</label><input type="number" name="abitrate" class="inp"></div>
-                        <div><label class="lbl">Keyframe aralığı (sn)</label><input type="number" name="gop" class="inp"></div>
-                    </div>
-                    <hr class="border-slate-800">
-                    <h2 class="font-semibold">Otomatik Yeniden Başlatma</h2>
-                    <div class="grid sm:grid-cols-2 gap-4 items-end">
-                        <label class="flex items-center gap-3 text-sm"><span class="sw"><input type="checkbox" name="autorestart"><span></span></span> FFmpeg çökerse / kaynak kesilirse otomatik yeniden başlat</label>
-                        <div><label class="lbl">Bekleme süresi (sn)</label><input type="number" name="restart_delay" class="inp"></div>
-                    </div>
-                </div>
-
-                <!-- SİSTEM -->
-                <div class="tabp card space-y-5" id="t-sys">
-                    <h2 class="font-semibold">FFmpeg</h2>
-                    <div>
-                        <label class="lbl">ffmpeg.exe yolu</label>
-                        <input name="ffmpeg_path" class="inp font-mono" placeholder="C:\ffmpeg\bin\ffmpeg.exe">
-                    </div>
-                    <button type="button" id="bTest" class="btn bg-indigo-600 hover:bg-indigo-500">🧪 FFmpeg’i Test Et</button>
-                    <div id="testOut" class="text-sm space-y-1"></div>
-
-                    <hr class="border-slate-800">
-                    <h2 class="font-semibold">Sunucu Bilgisi</h2>
-                    <ul class="text-sm space-y-1 text-slate-300">
-                        <li>PHP: <b><?= h($sys['php']) ?></b> · <?= h($sys['os']) ?></li>
-                        <li>PHP çalışma kullanıcısı: <b><?= h($sys['user']) ?></b></li>
-                        <li>exec(): <?= $sys['exec'] ? '<span class="text-emerald-400">Açık ✓</span>' : '<span class="text-red-400">KAPALI ✗ (php.ini → disable_functions)</span>' ?></li>
-                        <li>COM (WScript): <?= $sys['com'] ? '<span class="text-emerald-400">Var ✓</span>' : '<span class="text-amber-400">Yok (proc_open yedek yöntemi kullanılır)</span>' ?></li>
-                        <li>data klasörü yazılabilir: <?= $sys['writable'] ? '<span class="text-emerald-400">Evet ✓</span>' : '<span class="text-red-400">HAYIR ✗ — klasöre yazma izni verin</span>' ?></li>
-                    </ul>
-                </div>
-            </form>
-
-            <!-- Şifre (form dışı) -->
-            <div class="tabp card space-y-4" id="t-sys2" style="display:none"></div>
-            <div class="card mt-5 space-y-3 hidden" id="pwCard">
-                <h2 class="font-semibold">Giriş Bilgilerini Değiştir</h2>
-                <div class="grid sm:grid-cols-3 gap-3">
-                    <div><label class="lbl">Yeni kullanıcı adı</label><input id="pwUser" class="inp" value="<?= h($cfgNow['admin_user']) ?>"></div>
-                    <div><label class="lbl">Mevcut şifre</label><input id="pwCur" type="password" class="inp"></div>
-                    <div><label class="lbl">Yeni şifre</label><input id="pwNew" type="password" class="inp"></div>
-                </div>
-                <button id="bPw" class="btn bg-slate-700 hover:bg-slate-600">🔑 Güncelle</button>
-            </div>
-        </div>
-
-        <!-- Sağ: canlı taslak önizleme -->
-        <aside>
-            <div class="card sticky top-4">
-                <div class="flex items-center justify-between mb-2">
-                    <h2 class="font-semibold text-sm">Taslak Önizleme</h2>
-                    <span class="text-[11px] text-slate-500" id="pvRes">1280x720</span>
-                </div>
-                <div id="pv" class="relative w-full aspect-video rounded-lg overflow-hidden border border-slate-800" style="background:linear-gradient(135deg,#1e1b4b,#0f172a 45%,#134e4a)">
-                    <div class="absolute inset-0 flex items-center justify-center text-slate-600 text-4xl select-none">▶</div>
-                    <img id="pvLogo" class="absolute hidden" alt="">
-                    <div id="pvBand" class="absolute left-0 right-0 overflow-hidden flex items-center"><div id="pvTxt"></div></div>
-                </div>
-                <p class="hint">Logo ve bant konumunun yaklaşık görünümü. Gerçek görüntü kaynağınıza göre değişir.</p>
-                <div class="mt-4 text-xs text-slate-400 space-y-1 border-t border-slate-800 pt-3">
-                    <div>Kaynak: <span id="sumIn" class="text-slate-200 break-all">-</span></div>
-                    <div>Çıkış: <span id="sumOut" class="text-slate-200 break-all">-</span></div>
-                    <div>Mod: <span id="sumMode" class="text-slate-200">-</span></div>
-                </div>
-            </div>
-        </aside>
+<!-- ============ YAYIN FORMU ============ -->
+<div class="modal-bg" id="mForm">
+  <form class="modal max-w-3xl" id="sform" onsubmit="saveForm(event)" autocomplete="off">
+    <input type="hidden" name="id" value="0">
+    <div class="flex items-center justify-between p-4 border-b border-[#1d2840]">
+      <h2 class="font-bold" id="formTitle">Yeni Yayın</h2>
+      <button type="button" class="btn btn-ghost" onclick="closeM('mForm')">✕</button>
+    </div>
+    <div class="px-4 pt-3 flex flex-wrap gap-1">
+      <span class="tab active" data-tab="t1">Genel</span>
+      <span class="tab" data-tab="t2">Logo</span>
+      <span class="tab" data-tab="t3">Video / Ses</span>
+      <span class="tab" data-tab="t4">Gelişmiş</span>
     </div>
 
-    <p class="text-center text-xs text-slate-600 mt-8">Yayın Paneli · PHP <?= h(PHP_VERSION) ?> · FFmpeg</p>
+    <div class="p-4 space-y-4">
+      <!-- GENEL -->
+      <section data-pane="t1" class="space-y-4">
+        <div><label class="lbl">Yayın adı</label><input class="inp" name="name" placeholder="Örn: Kanal 1" required></div>
+        <div>
+          <label class="lbl">Kaynak yayın linki (m3u8, ts, rtmp, rtsp, udp, srt, dosya yolu...)</label>
+          <div class="flex gap-2">
+            <input class="inp" name="source" placeholder="http://ornek.com/canli/index.m3u8" required>
+            <button type="button" class="btn btn-ghost" onclick="probeSrc()">🔍 Test</button>
+          </div>
+          <div id="probeRes" class="text-xs mt-1 text-slate-400"></div>
+        </div>
+        <div class="grid sm:grid-cols-3 gap-3">
+          <div>
+            <label class="lbl">Çıkış türü</label>
+            <select class="inp" name="output_type" onchange="updForm()">
+              <option value="rtmp">RTMP (YouTube, Facebook, Nginx...)</option>
+              <option value="hls">HLS (bu sunucudan yayınla)</option>
+              <option value="mpegts">MPEG-TS (udp / srt / tcp)</option>
+              <option value="custom">Özel (format otomatik)</option>
+            </select>
+          </div>
+          <div class="sm:col-span-2" id="outUrlBox">
+            <label class="lbl">Çıkış adresi</label>
+            <input class="inp" name="output_url" id="outUrl" placeholder="rtmp://a.rtmp.youtube.com/live2/ANAHTAR">
+          </div>
+          <div class="sm:col-span-2 grid grid-cols-2 gap-3 hidden" id="hlsBox">
+            <div><label class="lbl">HLS parça süresi (sn)</label><input class="inp" type="number" name="hls_time" min="1" max="20" value="4"></div>
+            <div><label class="lbl">Liste uzunluğu (parça)</label><input class="inp" type="number" name="hls_list" min="2" max="50" value="6"></div>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-x-6 gap-y-2">
+          <label class="sw"><input type="checkbox" name="autorestart"> Kopunca otomatik yeniden başlat</label>
+          <label class="sw"><input type="checkbox" name="reconnect"> HTTP kaynak için yeniden bağlan</label>
+          <label class="sw"><input type="checkbox" name="realtime"> Gerçek zamanlı oku (-re) <span class="text-slate-500">(dosya kaynaklarında)</span></label>
+        </div>
+      </section>
+
+      <!-- LOGO -->
+      <section data-pane="t2" class="hidden">
+        <div class="grid md:grid-cols-2 gap-5">
+          <div class="space-y-3">
+            <div>
+              <label class="lbl">Logo dosyası (png / jpg / gif / webp)</label>
+              <input class="inp" type="file" name="logo" id="logoFile" accept=".png,.jpg,.jpeg,.gif,.webp,image/*">
+              <div class="text-xs text-slate-500 mt-1" id="logoCur"></div>
+              <label class="sw mt-2 hidden" id="rmLogoBox"><input type="checkbox" name="remove_logo" id="rmLogo"> Mevcut logoyu kaldır</label>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="lbl">Konum</label>
+                <select class="inp" name="logo_pos" onchange="updForm()">
+                  <option value="tr">Sağ üst</option><option value="tl">Sol üst</option>
+                  <option value="br">Sağ alt</option><option value="bl">Sol alt</option>
+                  <option value="c">Orta</option><option value="custom">Özel (x,y)</option>
+                </select>
+              </div>
+              <div><label class="lbl">Kenar boşluğu (px)</label><input class="inp" type="number" name="logo_margin" value="20" min="0"></div>
+              <div><label class="lbl">Genişlik (px, 0=orijinal)</label><input class="inp" type="number" name="logo_width" value="150" min="0"></div>
+              <div><label class="lbl">Saydamlık (%)</label><input class="inp" type="number" name="logo_opacity" value="100" min="0" max="100"></div>
+              <div class="hidden" id="cxBox"><label class="lbl">X</label><input class="inp" type="number" name="logo_x" value="10"></div>
+              <div class="hidden" id="cyBox"><label class="lbl">Y</label><input class="inp" type="number" name="logo_y" value="10"></div>
+            </div>
+            <p class="text-xs text-amber-300/80">⚠ Logo eklemek videoyu yeniden kodlamayı gerektirir (Kopyala modu devre dışı kalır).</p>
+          </div>
+          <div>
+            <label class="lbl">Önizleme (16:9)</label>
+            <div id="prevBox" class="relative w-full rounded-xl overflow-hidden border border-[#243049]" style="aspect-ratio:16/9;background:linear-gradient(135deg,#1f2a4d,#0b1020 60%,#2a1f4d)">
+              <div class="absolute inset-0 flex items-center justify-center text-slate-600 text-sm select-none">video</div>
+              <img id="prevLogo" class="absolute hidden" style="max-width:none" alt="">
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VİDEO / SES -->
+      <section data-pane="t3" class="hidden space-y-4">
+        <div>
+          <label class="lbl">Mod</label>
+          <select class="inp" name="mode" onchange="updForm()">
+            <option value="transcode">Yeniden kodla (logo, boyut, bitrate için)</option>
+            <option value="copy">Kopyala (kodlama yok, çok düşük CPU — logo kullanılamaz)</option>
+          </select>
+        </div>
+        <div id="encBox" class="space-y-4">
+          <div class="grid sm:grid-cols-3 gap-3">
+            <div>
+              <label class="lbl">Video kodlayıcı</label>
+              <select class="inp" name="vcodec" onchange="updForm()">
+                <option value="libx264">libx264 (CPU)</option>
+                <option value="h264_nvenc">h264_nvenc (NVIDIA)</option>
+                <option value="h264_qsv">h264_qsv (Intel)</option>
+                <option value="h264_amf">h264_amf (AMD)</option>
+              </select>
+            </div>
+            <div>
+              <label class="lbl">x264 preset</label>
+              <select class="inp" name="preset">
+                <option>ultrafast</option><option>superfast</option><option selected>veryfast</option>
+                <option>faster</option><option>fast</option><option>medium</option>
+              </select>
+            </div>
+            <div><label class="lbl">Video bitrate (kbps)</label><input class="inp" type="number" name="vbitrate" value="2500" min="100"></div>
+            <div>
+              <label class="lbl">Çözünürlük</label>
+              <select class="inp" name="resolution" onchange="updForm()">
+                <option value="">Orijinal</option><option value="1920x1080">1920x1080</option>
+                <option value="1280x720">1280x720</option><option value="854x480">854x480</option><option value="640x360">640x360</option>
+              </select>
+            </div>
+            <div><label class="lbl">FPS (0 = orijinal)</label><input class="inp" type="number" name="fps" value="0" min="0" max="120"></div>
+            <div>
+              <label class="lbl">Ses</label>
+              <select class="inp" name="audio_mode" onchange="updForm()">
+                <option value="aac">AAC (yeniden kodla)</option><option value="copy">Kopyala</option><option value="none">Sessiz</option>
+              </select>
+            </div>
+            <div><label class="lbl">Ses bitrate (kbps)</label><input class="inp" type="number" name="abitrate" value="128" min="32"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- GELİŞMİŞ -->
+      <section data-pane="t4" class="hidden space-y-4">
+        <div><label class="lbl">User-Agent (isteğe bağlı, http kaynaklar)</label><input class="inp" name="user_agent" placeholder="Mozilla/5.0 ..."></div>
+        <div><label class="lbl">Ek giriş parametreleri (-i öncesi)</label><input class="inp" name="extra_in" placeholder="-rw_timeout 15000000"></div>
+        <div><label class="lbl">Ek çıkış parametreleri</label><input class="inp" name="extra_out" placeholder="-metadata service_name=Kanal1"></div>
+        <p class="text-xs text-slate-500">Parametreleri boşlukla ayırın. Oluşan tam komutu yayın kartındaki “Log” penceresinde görebilirsiniz.</p>
+      </section>
+    </div>
+
+    <div class="p-4 border-t border-[#1d2840] flex justify-end gap-2">
+      <button type="button" class="btn btn-ghost" onclick="closeM('mForm')">Vazgeç</button>
+      <button class="btn btn-pri" id="saveBtn">💾 Kaydet</button>
+    </div>
+  </form>
 </div>
 
-<div id="toasts" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
+<!-- ============ LOG ============ -->
+<div class="modal-bg" id="mLog">
+  <div class="modal max-w-3xl">
+    <div class="flex items-center justify-between p-4 border-b border-[#1d2840]">
+      <h2 class="font-bold" id="logTitle">Log</h2>
+      <button class="btn btn-ghost" onclick="closeM('mLog')">✕</button>
+    </div>
+    <div class="p-4 space-y-3">
+      <div><div class="lbl">FFmpeg komutu</div><pre class="log" style="color:#c7d2fe;max-height:140px" id="logCmd"></pre></div>
+      <div><div class="lbl">Çıktı (otomatik yenilenir)</div><pre class="log" id="logBody"></pre></div>
+      <div class="flex justify-end"><button class="btn btn-ghost" onclick="clearLog()">Logu temizle</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ OYNATICI ============ -->
+<div class="modal-bg" id="mPlay">
+  <div class="modal max-w-3xl">
+    <div class="flex items-center justify-between p-4 border-b border-[#1d2840]">
+      <h2 class="font-bold" id="playTitle">Önizleme</h2>
+      <button class="btn btn-ghost" onclick="closeM('mPlay')">✕</button>
+    </div>
+    <div class="p-4 space-y-3">
+      <video id="player" controls muted autoplay playsinline class="w-full rounded-xl bg-black" style="aspect-ratio:16/9"></video>
+      <div class="flex gap-2">
+        <input class="inp" id="playUrl" readonly>
+        <button class="btn btn-pri" onclick="copyUrl()">Kopyala</button>
+      </div>
+      <p class="text-xs text-slate-500">HLS çıktısı başladıktan birkaç saniye sonra oynatılabilir.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============ AYARLAR ============ -->
+<div class="modal-bg" id="mSet">
+  <form class="modal max-w-xl" onsubmit="saveSettings(event)" id="setForm" autocomplete="off">
+    <div class="flex items-center justify-between p-4 border-b border-[#1d2840]">
+      <h2 class="font-bold">Ayarlar</h2>
+      <button type="button" class="btn btn-ghost" onclick="closeM('mSet')">✕</button>
+    </div>
+    <div class="p-4 space-y-4">
+      <div>
+        <label class="lbl">FFmpeg yolu</label>
+        <div class="flex gap-2">
+          <input class="inp" name="ffmpeg" placeholder="C:\ffmpeg\bin\ffmpeg.exe">
+          <button type="button" class="btn btn-ghost" onclick="testFF()">Test</button>
+        </div>
+        <div id="ffRes" class="text-xs mt-1 text-slate-400"></div>
+      </div>
+      <div>
+        <label class="lbl">FFmpeg log seviyesi</label>
+        <select class="inp" name="loglevel"><option>error</option><option>warning</option><option>info</option><option>verbose</option></select>
+      </div>
+      <hr class="border-[#1d2840]">
+      <div class="text-sm font-semibold">Yönetici hesabı</div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="lbl">Kullanıcı adı</label><input class="inp" name="new_user"></div>
+        <div><label class="lbl">Yeni şifre (boş = değişmez)</label><input class="inp" type="password" name="new_pass" autocomplete="new-password"></div>
+        <div class="col-span-2"><label class="lbl">Mevcut şifre (değişiklik için gerekli)</label><input class="inp" type="password" name="cur_pass" autocomplete="off"></div>
+      </div>
+      <hr class="border-[#1d2840]">
+      <div>
+        <div class="text-sm font-semibold mb-1">Otomatik başlatma (Görev Zamanlayıcı)</div>
+        <p class="text-xs text-slate-400 mb-2">Sunucu yeniden başlarsa “çalışıyor” durumundaki yayınları geri açmak için aşağıdaki komutu Görev Zamanlayıcı’da (açılışta + her 1 dakikada) çalıştırın:</p>
+        <pre class="log" style="color:#fde68a;max-height:none">"<?= htmlspecialchars($phpExe) ?>" "<?= htmlspecialchars(__FILE__) ?>" watchdog</pre>
+      </div>
+    </div>
+    <div class="p-4 border-t border-[#1d2840] flex justify-end gap-2">
+      <button type="button" class="btn btn-ghost" onclick="closeM('mSet')">Kapat</button>
+      <button class="btn btn-pri">Kaydet</button>
+    </div>
+  </form>
+</div>
+
+<div id="toasts"></div>
 
 <script>
-const CSRF = <?= json_encode($_SESSION['csrf']) ?>;
-let CFG = <?= json_encode($cfgNow, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_HEX_TAG) ?>;
-delete CFG.admin_hash;
-const $ = s => document.querySelector(s);
-const $$ = s => [...document.querySelectorAll(s)];
-let state = 'stopped', uptimeBase = 0, uptimeAt = 0, busy = false;
+const CSRF = <?= json_encode($csrf) ?>;
+const DEFAULTS = <?= json_encode(stream_defaults()) ?>;
+const $ = id => document.getElementById(id);
+let STREAMS = [], ENV = {}, CONFIG = {};
+let logId = 0, logTimer = null, hlsObj = null, prevSrc = '';
 
-function toast(msg, ok = true) {
-    const d = document.createElement('div');
-    d.className = 'px-4 py-3 rounded-lg text-sm shadow-xl border max-w-xs ' + (ok ? 'bg-emerald-950 border-emerald-700 text-emerald-100' : 'bg-red-950 border-red-700 text-red-100');
-    d.textContent = msg;
-    $('#toasts').appendChild(d);
-    setTimeout(() => d.remove(), 4500);
+/* ---------- yardımcılar ---------- */
+function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function toast(msg, type='ok'){
+  const d = document.createElement('div');
+  d.className = 'toast ' + (type==='ok' ? 'bg-emerald-600 text-white' : type==='err' ? 'bg-rose-600 text-white' : 'bg-slate-700 text-white');
+  d.textContent = msg; $('toasts').appendChild(d);
+  setTimeout(() => d.remove(), type==='err' ? 6000 : 3000);
 }
-async function api(name, data = {}) {
-    const fd = new FormData();
-    for (const k in data) fd.append(k, data[k]);
-    try {
-        const r = await fetch('?api=' + name, { method: 'POST', headers: { 'X-CSRF': CSRF }, body: fd });
-        if (r.status === 401) { location.reload(); return { ok: false, msg: 'Oturum bitti' }; }
-        return await r.json();
-    } catch (e) { return { ok: false, msg: 'Sunucuya ulaşılamadı' }; }
+async function api(action, body, method='POST'){
+  const opt = { method, headers: {'X-CSRF': CSRF} };
+  if (body instanceof FormData) opt.body = body;
+  else if (body) opt.body = new URLSearchParams(body);
+  const r = await fetch('?a=' + action, opt);
+  if (r.status === 401) { location.reload(); throw new Error('Oturum sona erdi'); }
+  let j; try { j = await r.json(); } catch(e){ throw new Error('Sunucu yanıtı geçersiz (HTTP ' + r.status + ')'); }
+  if (!r.ok || j.error) throw new Error(j.error || 'Bilinmeyen hata');
+  return j;
+}
+function fmtUp(sec){
+  if (!sec) return '—';
+  const d = Math.floor(sec/86400), h = Math.floor(sec%86400/3600), m = Math.floor(sec%3600/60), s = sec%60;
+  return (d? d+'g ':'') + (h||d ? h+'sa ':'') + m + 'dk ' + (d||h ? '' : s+'sn');
+}
+function openM(id){ $(id).classList.add('open'); document.body.style.overflow='hidden'; }
+function closeM(id){
+  $(id).classList.remove('open');
+  if (!document.querySelector('.modal-bg.open')) document.body.style.overflow='';
+  if (id==='mLog'){ clearInterval(logTimer); logTimer=null; }
+  if (id==='mPlay'){ if (hlsObj){ hlsObj.destroy(); hlsObj=null; } const v=$('player'); v.pause(); v.removeAttribute('src'); v.load(); }
+}
+document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('mousedown', e => { if (e.target===m && m.id!=='mForm') closeM(m.id); }));
+
+/* ---------- liste ---------- */
+async function load(){
+  try {
+    const j = await api('list', null, 'GET');
+    STREAMS = j.streams; ENV = j.env; CONFIG = j.config;
+    render();
+  } catch(e){ console.warn(e); }
+}
+function render(){
+  const run = STREAMS.filter(s => s.state==='running').length;
+  const down = STREAMS.filter(s => s.state==='down').length;
+  $('stats').innerHTML = [
+    ['Toplam yayın', STREAMS.length, '🎬', 'text-indigo-300'],
+    ['Çalışan', run, '🟢', 'text-emerald-300'],
+    ['Durmuş', STREAMS.length - run - down, '⏹', 'text-slate-300'],
+    ['Sorunlu / Bekleyen', down, '⚠', 'text-amber-300'],
+  ].map(x => `<div class="card p-4"><div class="flex items-center justify-between"><span class="text-xs text-slate-400">${x[0]}</span><span>${x[2]}</span></div><div class="text-3xl font-bold mt-1 ${x[3]}">${x[1]}</div></div>`).join('');
+
+  const w = [];
+  const box = (t,c) => `<div class="text-sm rounded-xl border px-4 py-2.5 ${c}">${t}</div>`;
+  if (!ENV.os_ok) w.push(box('Bu panel Windows sunucu için tasarlanmıştır; yayın başlatma çalışmayabilir.', 'bg-rose-500/10 border-rose-500/30 text-rose-200'));
+  if (!ENV.exec_ok) w.push(box('PHP <b>exec()</b> fonksiyonu kapalı. php.ini içindeki <code>disable_functions</code> satırından exec ve proc_open’ı kaldırın.', 'bg-rose-500/10 border-rose-500/30 text-rose-200'));
+  if (!ENV.ffmpeg_ok) w.push(box('FFmpeg bulunamadı: <b>' + esc(CONFIG.ffmpeg) + '</b> — <button class="underline" onclick="openSettings()">Ayarlar</button>’dan yolu düzeltin.', 'bg-amber-500/10 border-amber-500/30 text-amber-200'));
+  if (ENV.default_pw) w.push(box('Varsayılan şifre (admin / admin123) kullanılıyor. Güvenlik için <button class="underline" onclick="openSettings()">şifrenizi değiştirin</button>.', 'bg-amber-500/10 border-amber-500/30 text-amber-200'));
+  $('warns').innerHTML = w.join('');
+
+  $('empty').classList.toggle('hidden', STREAMS.length>0);
+  $('list').innerHTML = STREAMS.map(card).join('');
+}
+function card(s){
+  const st = {
+    running: ['Yayında','bg-emerald-500 pulse','text-emerald-300'],
+    down: ['Durdu / Yeniden deneniyor','bg-amber-500','text-amber-300'],
+    stopped: ['Durduruldu','bg-slate-500','text-slate-400'],
+  }[s.state];
+  const outLabel = {rtmp:'RTMP', hls:'HLS', mpegts:'MPEG-TS', custom:'Özel'}[s.output_type];
+  const outDesc = s.output_type==='hls' ? location.origin + location.pathname.replace(/[^\/]*$/,'') + s.hls_path : s.output_url;
+  const isRun = s.state !== 'stopped';
+  return `<div class="card p-4 flex flex-col gap-3">
+    <div class="flex items-start gap-3">
+      <div class="w-14 h-14 rounded-xl bg-[#0a1020] border border-[#1d2840] flex items-center justify-center overflow-hidden shrink-0">
+        ${s.logo_url ? `<img src="${s.logo_url}" class="max-w-full max-h-full object-contain">` : '<span class="text-2xl opacity-40">📺</span>'}
+      </div>
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-2 flex-wrap">
+          <h3 class="font-semibold truncate">${esc(s.name)}</h3>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/20">${outLabel}</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-300 border border-slate-500/20">${s.mode==='copy' && !s.logo ? 'COPY' : 'ENCODE'}</span>
+        </div>
+        <div class="flex items-center gap-2 text-xs mt-1 ${st[2]}"><span class="dot ${st[1]}"></span>${st[0]}${s.running ? ' • ' + fmtUp(s.uptime) : ''}</div>
+      </div>
+    </div>
+    <div class="text-xs space-y-1 text-slate-400">
+      <div class="truncate" title="${esc(s.source)}"><span class="text-slate-500">Kaynak:</span> ${esc(s.source)}</div>
+      <div class="truncate" title="${esc(outDesc)}"><span class="text-slate-500">Çıkış:</span> ${esc(outDesc)}</div>
+    </div>
+    <div class="flex flex-wrap gap-2 pt-1">
+      ${isRun
+        ? `<button class="btn btn-danger" onclick="act('stop',${s.id},this)">■ Durdur</button><button class="btn btn-warn" onclick="act('restart',${s.id},this)">↻ Yeniden</button>`
+        : `<button class="btn btn-ok" onclick="act('start',${s.id},this)">▶ Başlat</button>`}
+      ${s.hls_path ? `<button class="btn btn-ghost" onclick="openPlay(${s.id})">▷ İzle</button>` : ''}
+      <button class="btn btn-ghost" onclick="openLog(${s.id})">📄 Log</button>
+      <button class="btn btn-ghost" onclick="openForm(${s.id})">✎ Düzenle</button>
+      <button class="btn btn-ghost ml-auto" onclick="delStream(${s.id})">🗑</button>
+    </div>
+  </div>`;
+}
+async function act(action, id, btn){
+  if (btn) btn.disabled = true;
+  try { await api(action, {id}); toast({start:'Yayın başlatıldı', stop:'Yayın durduruldu', restart:'Yayın yeniden başlatıldı'}[action]); }
+  catch(e){ toast(e.message, 'err'); }
+  await load();
+}
+async function delStream(id){
+  const s = STREAMS.find(x => x.id===id);
+  if (!confirm('"' + s.name + '" silinsin mi? Yayın durdurulur ve dosyaları silinir.')) return;
+  try { await api('delete', {id}); toast('Silindi'); } catch(e){ toast(e.message,'err'); }
+  load();
 }
 
-/* sekmeler */
-$$('#tabs .tab').forEach(t => t.onclick = () => {
-    $$('#tabs .tab').forEach(x => x.classList.remove('active'));
-    t.classList.add('active');
-    $$('.tabp').forEach(x => x.classList.remove('active'));
-    $('#t-' + t.dataset.t).classList.add('active');
-    $('#pwCard').classList.toggle('hidden', t.dataset.t !== 'sys');
+/* ---------- form ---------- */
+const form = $('sform');
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+function switchTab(id){
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab===id));
+  document.querySelectorAll('[data-pane]').forEach(p => p.classList.toggle('hidden', p.dataset.pane!==id));
+  if (id==='t2') drawPrev();
+}
+function openForm(id){
+  const s = id ? STREAMS.find(x => x.id===id) : DEFAULTS;
+  form.reset();
+  for (const k in DEFAULTS){
+    const el = form.elements[k];
+    if (!el || el.type==='file') continue;
+    if (el.type==='checkbox') el.checked = !!+s[k];
+    else el.value = s[k];
+  }
+  form.elements.id.value = id;
+  $('formTitle').textContent = id ? 'Yayını Düzenle: ' + s.name : 'Yeni Yayın';
+  $('probeRes').textContent = '';
+  $('logoFile').value = '';
+  $('rmLogoBox').classList.toggle('hidden', !s.logo);
+  $('logoCur').textContent = s.logo ? 'Mevcut logo kayıtlı. Yeni dosya seçerseniz değiştirilir.' : 'Henüz logo yok.';
+  prevSrc = s.logo_url || '';
+  switchTab('t1'); updForm(); openM('mForm');
+}
+function updForm(){
+  const f = form.elements, ot = f.output_type.value;
+  $('outUrlBox').classList.toggle('hidden', ot==='hls');
+  $('hlsBox').classList.toggle('hidden', ot!=='hls');
+  $('outUrl').placeholder = {rtmp:'rtmp://a.rtmp.youtube.com/live2/ANAHTAR', mpegts:'udp://239.0.0.1:1234?pkt_size=1316  veya  srt://ip:port', custom:'Çıkış adresi / dosya yolu'}[ot] || '';
+  const custom = f.logo_pos.value==='custom';
+  $('cxBox').classList.toggle('hidden', !custom); $('cyBox').classList.toggle('hidden', !custom);
+  const hasLogo = prevSrc && !$('rmLogo').checked;
+  const copy = f.mode.value==='copy' && !hasLogo;
+  $('encBox').style.opacity = copy ? .4 : 1; $('encBox').style.pointerEvents = copy ? 'none' : '';
+  f.preset.disabled = f.vcodec.value!=='libx264';
+  f.abitrate.disabled = f.audio_mode.value!=='aac';
+  drawPrev();
+}
+$('logoFile').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (file){ prevSrc = URL.createObjectURL(file); $('rmLogo').checked = false; }
+  updForm();
 });
+$('rmLogo').addEventListener('change', () => { if ($('rmLogo').checked) prevSrc=''; else { const s=STREAMS.find(x=>x.id==form.elements.id.value); prevSrc = s ? s.logo_url : ''; } updForm(); });
+form.addEventListener('input', e => { if (['logo_x','logo_y','logo_margin','logo_width','logo_opacity'].includes(e.target.name)) drawPrev(); });
+function drawPrev(){
+  const img = $('prevLogo'), box = $('prevBox'), f = form.elements;
+  if (!prevSrc){ img.classList.add('hidden'); return; }
+  if (img.getAttribute('src') !== prevSrc){ img.src = prevSrc; img.onload = drawPrev; }
+  img.classList.remove('hidden');
+  const pw = box.clientWidth; if (!pw) return;
+  const refW = f.resolution.value ? +f.resolution.value.split('x')[0] : 1280, k = pw / refW;
+  const w = (+f.logo_width.value || img.naturalWidth || 100) * k, m = (+f.logo_margin.value||0) * k;
+  Object.assign(img.style, {width:w+'px', opacity:(+f.logo_opacity.value||0)/100, left:'auto', right:'auto', top:'auto', bottom:'auto', transform:''});
+  switch (f.logo_pos.value){
+    case 'tl': img.style.left=m+'px'; img.style.top=m+'px'; break;
+    case 'bl': img.style.left=m+'px'; img.style.bottom=m+'px'; break;
+    case 'br': img.style.right=m+'px'; img.style.bottom=m+'px'; break;
+    case 'c': img.style.left='50%'; img.style.top='50%'; img.style.transform='translate(-50%,-50%)'; break;
+    case 'custom': img.style.left=(+f.logo_x.value*k)+'px'; img.style.top=(+f.logo_y.value*k)+'px'; break;
+    default: img.style.right=m+'px'; img.style.top=m+'px';
+  }
+}
+async function saveForm(e){
+  e.preventDefault();
+  const btn = $('saveBtn'); btn.disabled = true;
+  try {
+    const wasId = +form.elements.id.value;
+    const j = await api('save', new FormData(form));
+    closeM('mForm'); toast('Kaydedildi');
+    await load();
+    if (j.running && confirm('Yayın şu anda çalışıyor. Değişikliklerin uygulanması için yeniden başlatılsın mı?')) await act('restart', j.id);
+  } catch(err){ toast(err.message, 'err'); }
+  btn.disabled = false;
+}
+async function probeSrc(){
+  const src = form.elements.source.value.trim();
+  if (!src) return toast('Önce kaynak adresini girin', 'err');
+  const r = $('probeRes'); r.className = 'text-xs mt-1 text-slate-400'; r.textContent = 'Test ediliyor (en fazla ~15 sn)...';
+  try {
+    const j = await api('probe', {source: src, user_agent: form.elements.user_agent.value});
+    r.className = 'text-xs mt-1 ' + (j.ok ? 'text-emerald-300' : 'text-rose-300');
+    r.textContent = (j.ok ? '✔ ' : '✖ ') + j.message;
+  } catch(e){ r.className = 'text-xs mt-1 text-rose-300'; r.textContent = '✖ ' + e.message; }
+}
 
-/* form doldur / topla */
-function fillForm() {
-    $$('#cfg [name]').forEach(el => {
-        const v = CFG[el.name];
-        if (v === undefined) return;
-        if (el.type === 'checkbox') el.checked = !!+v; else el.value = v;
-    });
+/* ---------- log ---------- */
+async function pullLog(){
+  try {
+    const j = await api('log&id=' + logId, null, 'GET');
+    const body = $('logBody'), atBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 20;
+    body.textContent = j.log || '(log boş)';
+    $('logCmd').textContent = j.cmd;
+    if (atBottom) body.scrollTop = body.scrollHeight;
+  } catch(e){}
 }
-function collect() {
-    const o = {};
-    $$('#cfg [name]').forEach(el => o[el.name] = el.type === 'checkbox' ? (el.checked ? 1 : 0) : el.value);
-    return o;
+function openLog(id){
+  logId = id; const s = STREAMS.find(x => x.id===id);
+  $('logTitle').textContent = 'Log: ' + s.name;
+  $('logBody').textContent = 'Yükleniyor...'; openM('mLog');
+  pullLog().then(() => { $('logBody').scrollTop = $('logBody').scrollHeight; });
+  logTimer = setInterval(pullLog, 3000);
 }
-async function save(silent) {
-    const r = await api('save', collect());
-    if (r.ok) { CFG = r.cfg; delete CFG.admin_hash; updateSummary(); }
-    if (!silent || !r.ok) toast(r.msg, r.ok);
-    return r.ok;
+async function clearLog(){ await api('clearlog', {id: logId}); pullLog(); }
+
+/* ---------- oynatıcı ---------- */
+function openPlay(id){
+  const s = STREAMS.find(x => x.id===id);
+  const url = new URL(s.hls_path, location.href.split('?')[0]).href;
+  $('playTitle').textContent = 'İzle: ' + s.name; $('playUrl').value = url; openM('mPlay');
+  const v = $('player');
+  if (window.Hls && Hls.isSupported()){ hlsObj = new Hls({lowLatencyMode:true}); hlsObj.loadSource(url); hlsObj.attachMedia(v); }
+  else v.src = url;
+  v.play().catch(()=>{});
+}
+function copyUrl(){ $('playUrl').select(); document.execCommand('copy'); toast('Link kopyalandı'); }
+
+/* ---------- ayarlar ---------- */
+function openSettings(){
+  const f = $('setForm').elements;
+  f.ffmpeg.value = CONFIG.ffmpeg; f.loglevel.value = CONFIG.loglevel; f.new_user.value = CONFIG.admin_user;
+  f.new_pass.value = ''; f.cur_pass.value = ''; $('ffRes').textContent = '';
+  openM('mSet');
+}
+async function testFF(){
+  const r = $('ffRes'); r.className = 'text-xs mt-1 text-slate-400'; r.textContent = 'Test ediliyor...';
+  try {
+    const j = await api('test_ffmpeg', {ffmpeg: $('setForm').elements.ffmpeg.value});
+    r.className = 'text-xs mt-1 ' + (j.ok ? 'text-emerald-300' : 'text-rose-300');
+    r.textContent = (j.ok ? '✔ ' : '✖ ') + j.message;
+  } catch(e){ r.className = 'text-xs mt-1 text-rose-300'; r.textContent = '✖ ' + e.message; }
+}
+async function saveSettings(e){
+  e.preventDefault();
+  try { await api('settings', new FormData($('setForm'))); toast('Ayarlar kaydedildi'); closeM('mSet'); load(); }
+  catch(err){ toast(err.message, 'err'); }
 }
 
-/* özet + önizleme */
-function updateSummary() {
-    const f = collect();
-    $('#sumIn').textContent = f.input_url || '(girilmedi)';
-    $('#sumOut').textContent = f.out_type === 'hls' ? 'HLS → /hls/stream.m3u8' : (f.out_url ? f.out_url.replace(/(\/[^\/]{4})[^\/]*$/, '$1…') : '(girilmedi)');
-    $('#sumMode').textContent = f.mode === 'copy' ? 'Kopyala (logo/bant yok)' : 'Yeniden kodla (' + f.vcodec + ')';
-    $('#outUrlWrap').classList.toggle('hidden', f.out_type === 'hls');
-    $('#hlsOpts').classList.toggle('hidden', f.out_type !== 'hls');
-    updatePreview();
-}
-function updatePreview() {
-    const f = collect();
-    const res = f.res === 'orig' ? '1280x720' : f.res;
-    const [W, H] = res.split('x').map(Number);
-    $('#pvRes').textContent = f.res === 'orig' ? 'orijinal' : res;
-    const box = $('#pv'), bw = box.clientWidth, k = bw / W;
-    const logo = $('#pvLogo');
-    const hasLogo = CFG.logo_file && +f.logo_enabled && f.mode === 'encode';
-    logo.classList.toggle('hidden', !hasLogo);
-    if (hasLogo) {
-        if (!logo.dataset.v) { logo.src = '?api=logo&t=' + Date.now(); logo.dataset.v = 1; }
-        logo.style.width = (f.logo_width * k) + 'px';
-        logo.style.opacity = f.logo_opacity / 100;
-        const m = f.logo_margin * k + 'px';
-        logo.style.left = logo.style.right = logo.style.top = logo.style.bottom = 'auto';
-        logo.style.transform = '';
-        if (f.logo_pos === 'center') { logo.style.left = '50%'; logo.style.top = '50%'; logo.style.transform = 'translate(-50%,-50%)'; }
-        else {
-            logo.style[f.logo_pos[1] === 'l' ? 'left' : 'right'] = m;
-            logo.style[f.logo_pos[0] === 't' ? 'top' : 'bottom'] = m;
-        }
-    }
-    const band = $('#pvBand'), txt = $('#pvTxt');
-    const hasBand = +f.band_enabled && f.mode === 'encode' && f.band_text.trim();
-    band.style.display = hasBand ? 'flex' : 'none';
-    if (hasBand) {
-        band.style.height = (f.band_height * k) + 'px';
-        band.style.top = f.band_pos === 'top' ? '0' : 'auto';
-        band.style.bottom = f.band_pos === 'top' ? 'auto' : '0';
-        const hex = f.band_bg_color, o = f.band_bg_opacity / 100;
-        band.style.background = `rgba(${parseInt(hex.slice(1,3),16)},${parseInt(hex.slice(3,5),16)},${parseInt(hex.slice(5,7),16)},${o})`;
-        txt.textContent = f.band_text;
-        txt.style.color = f.band_font_color;
-        txt.style.fontSize = (f.band_font_size * k) + 'px';
-        txt.style.whiteSpace = 'nowrap';
-        txt.className = f.band_style === 'scroll' ? 'mq' : 'mx-auto';
-        txt.style.animationDuration = Math.max(4, (W + f.band_text.length * f.band_font_size * .5) / f.band_speed) + 's';
-    }
-}
-document.addEventListener('input', e => { if (e.target.closest('#cfg')) updateSummary(); });
-window.addEventListener('resize', updatePreview);
-
-/* durum */
-function fmt(s) { s = Math.max(0, s | 0); return [s / 3600 | 0, (s % 3600) / 60 | 0, s % 60].map(n => String(n).padStart(2, '0')).join(':'); }
-function render(s) {
-    state = s.state;
-    const map = {
-        running: ['CANLI YAYINDA', 'bg-emerald-500/15 text-emerald-300', 'bg-emerald-400 live'],
-        waiting: ['YENİDEN BAĞLANIYOR…', 'bg-amber-500/15 text-amber-300', 'bg-amber-400 live'],
-        stopped: ['YAYIN KAPALI', 'bg-slate-800 text-slate-300', 'bg-slate-500']
-    }[s.state];
-    $('#pill').className = 'px-4 py-2 rounded-full text-sm font-bold flex items-center gap-2 ' + map[1];
-    $('#dot').className = 'w-2.5 h-2.5 rounded-full ' + map[2];
-    $('#pillTxt').textContent = map[0];
-    uptimeBase = s.uptime; uptimeAt = Date.now();
-    $('#bStart').disabled = s.state !== 'stopped' || busy;
-    $('#bStop').disabled = s.state === 'stopped' || busy;
-    $('#bRestart').disabled = busy;
-    $('#sFps').textContent = s.stats.fps; $('#sBr').textContent = s.stats.bitrate; $('#sSp').textContent = s.stats.speed;
-    $('#sTm').textContent = s.stats.time; $('#sSz').textContent = s.stats.size;
-    const lg = $('#log'), atEnd = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 20;
-    lg.textContent = s.log.length ? s.log.join('\n') : 'Henüz log yok.';
-    if (atEnd) lg.scrollTop = lg.scrollHeight;
-    const pl = $('#plog');
-    pl.textContent = s.panel_log.length ? s.panel_log.join('\n') : '-';
-    pl.scrollTop = pl.scrollHeight;
-    const hls = CFG.out_type === 'hls';
-    $('#hlsBox').classList.toggle('hidden', !hls);
-    $('#hlsUrl').value = s.hls_url;
-}
-async function poll() {
-    try { const r = await fetch('?api=status'); if (r.status === 401) return location.reload(); render(await r.json()); } catch (e) {}
-}
-setInterval(() => { $('#uptime').textContent = state === 'running' ? fmt(uptimeBase + (Date.now() - uptimeAt) / 1000) : '00:00:00'; }, 500);
-setInterval(poll, 3000);
-
-/* butonlar */
-async function act(name, label) {
-    busy = true; $$('.btn').forEach(b => { if (['bStart','bStop','bRestart'].includes(b.id)) b.disabled = true; });
-    if (name !== 'stop') { if (!await save(true)) { busy = false; poll(); return; } }
-    toast(label + '…');
-    const r = await api(name);
-    toast(r.msg, r.ok);
-    busy = false;
-    setTimeout(poll, 800);
-    poll();
-}
-$('#bSave').onclick = () => save(false);
-$('#bStart').onclick = () => act('start', 'Yayın başlatılıyor');
-$('#bStop').onclick = () => { if (confirm('Yayın durdurulsun mu?')) act('stop', 'Durduruluyor'); };
-$('#bRestart').onclick = () => act('restart', 'Yeniden başlatılıyor');
-$('#bBand').onclick = async () => { if (await save(true)) toast(state === 'running' ? 'Bant metni canlı olarak güncellendi.' : 'Bant metni kaydedildi.'); };
-$('#bCmd').onclick = async () => {
-    await save(true);
-    const r = await api('cmd'), o = $('#cmdOut');
-    o.classList.remove('hidden');
-    o.textContent = r.ok ? r.cmd : r.msg;
-};
-$('#bCopy').onclick = () => { $('#hlsUrl').select(); document.execCommand('copy'); toast('Link kopyalandı'); };
-$('#bPlay').onclick = () => {
-    const v = $('#vid'); v.classList.remove('hidden');
-    const url = $('#hlsUrl').value + '?t=' + Date.now();
-    const go = () => {
-        if (window.Hls && Hls.isSupported()) { if (v._h) v._h.destroy(); v._h = new Hls({ lowLatencyMode: false }); v._h.loadSource(url); v._h.attachMedia(v); v._h.on(Hls.Events.MANIFEST_PARSED, () => v.play()); }
-        else { v.src = url; v.play(); }
-    };
-    if (window.Hls) return go();
-    const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/hls.js@1'; s.onload = go; document.head.appendChild(s);
-};
-
-/* logo */
-function logoUi() {
-    const has = !!CFG.logo_file;
-    $('#logoThumb').classList.toggle('hidden', !has);
-    $('#logoNone').classList.toggle('hidden', has);
-    if (has) $('#logoThumb').src = '?api=logo&t=' + Date.now();
-    $('#bLogoDel').disabled = !has;
-    $('#pvLogo').dataset.v = '';
-}
-$('#logoFile').onchange = async e => {
-    const f = e.target.files[0]; if (!f) return;
-    const r = await api('logo_upload', { logo: f });
-    toast(r.msg, r.ok);
-    if (r.ok) { CFG.logo_file = r.file; logoUi(); updatePreview(); }
-    e.target.value = '';
-};
-$('#bLogoDel').onclick = async () => {
-    if (!confirm('Logo silinsin mi?')) return;
-    const r = await api('logo_delete'); toast(r.msg, r.ok);
-    if (r.ok) { CFG.logo_file = ''; logoUi(); updatePreview(); }
-};
-
-/* sistem */
-$('#bTest').onclick = async () => {
-    await save(true);
-    const o = $('#testOut'); o.innerHTML = '<span class="text-slate-400">Test ediliyor…</span>';
-    const r = await api('test');
-    if (!r.ok) { o.innerHTML = '<div class="text-red-400">✗ ' + r.msg + '</div>'; return; }
-    const li = (ok, t) => `<div class="${ok ? 'text-emerald-400' : 'text-amber-400'}">${ok ? '✓' : '✗'} ${t}</div>`;
-    o.innerHTML = `<div class="text-slate-200 font-mono text-xs mb-2">${r.version.replace(/</g, '&lt;')}</div>` +
-        li(r.drawtext, 'drawtext filtresi (alt bant)') + li(r.overlay, 'overlay filtresi (logo)') + li(r.libx264, 'libx264 (CPU H.264)') +
-        li(r.nvenc, 'h264_nvenc (NVIDIA)') + li(r.qsv, 'h264_qsv (Intel)') + li(r.amf, 'h264_amf (AMD)');
-};
-$('#bPw').onclick = async () => {
-    const r = await api('password', { new_user: $('#pwUser').value, cur_pass: $('#pwCur').value, new_pass: $('#pwNew').value });
-    toast(r.msg, r.ok);
-    if (r.ok) setTimeout(() => location.reload(), 1200);
-};
-
-/* başlat */
-fillForm(); updateSummary(); logoUi(); poll();
+load();
+setInterval(() => { if (!document.hidden) load(); }, 5000);
 </script>
 </body>
 </html>
