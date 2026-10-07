@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
-# baba120 relay — Windows Server 2022
-# Kurulum:
-#   1) FFmpeg:  C:\ffmpeg\bin\ffmpeg.exe  (yol farklıysa FFMPEG'i düzelt)
-#   2) cloudflared:  C:\cloudflared\cloudflared.exe  (yol farklıysa CF_BIN'i düzelt)
-#   3) python relay.py
+# baba120 relay — Windows uyumlu
+# Kurulum: Python 3, FFmpeg, cloudflared
+# Çalıştır: python relay.py
 #
-# Ne yapar:
-#  - Worker'ın ham yayınını (?direct=1) alır
-#  - Panelde kaydettiğin logo, Bakü saati/tarihi ve film/dizi adı+bölüm katmanını yayına yazar
-#  - HLS olarak yayınlar, cloudflared tüneli açar, tünel adresini Worker'a (/api/relay) kendisi kaydeder
+# Not: Termux yolları Windows yollarına çevrildi. FFMPEG ve CF_BIN tam yol.
 
 import json
 import os
@@ -24,19 +19,19 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 # ===================== AYARLAR =====================
-WORKER = "https://ulduztv.dunyanin-yabancisi.workers.dev"  # sonunda / olmasın
-ADMIN_KEY = "0"                                # Worker'daki ADMIN_PASS ile aynı
+WORKER = "https://ulduztv.dunyanin-yabancisi.workers.dev"
+ADMIN_KEY = "0"
 PORT = 8080
-W, H = 1280, 720                               # VDS zorlanırsa 854x480 yap
-VBR = "2500k"                                  # zorlanırsa 1500k yap
-POLL = 3                                       # panel ayarlarını kaç saniyede bir kontrol etsin
+W, H = 1280, 720
+VBR = "2500k"
+POLL = 3
 
-FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"           # ffmpeg tam yol
-CF_BIN = r"C:\cloudflared\cloudflared.exe"     # cloudflared tam yol
+FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"
+CF_BIN = r"C:\cloudflared\cloudflared.exe"
 # ===================================================
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) baba120-relay"
-BAKU = timezone(timedelta(hours=4))            # Azerbaycan saati (UTC+4)
+BAKU = timezone(timedelta(hours=4))
 HOME = os.path.join(os.environ.get("USERPROFILE", "C:\\"), "baba120-relay")
 HLS = os.path.join(HOME, "hls")
 
@@ -44,7 +39,6 @@ FONTS = [
     r"C:\Windows\Fonts\arial.ttf",
     r"C:\Windows\Fonts\segoeui.ttf",
     r"C:\Windows\Fonts\tahoma.ttf",
-    r"C:\Windows\Fonts\calibri.ttf",
 ]
 FONT = next((f for f in FONTS if os.path.exists(f)), None)
 
@@ -64,13 +58,34 @@ def http(url, data=None, headers=None, timeout=15):
 
 
 def write_atomic(path, text):
+    """Windows'ta FFmpeg dosyayı okurken replace patlar. retry + kopyala-yaz."""
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(text)
-    os.replace(tmp, path)
+    for attempt in range(20):
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(text)
+            try:
+                os.replace(tmp, path)
+            except PermissionError:
+                # hedef kilitli — doğrudan yaz (FFmpeg açık dosyayı okur)
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(text)
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            return
+        except OSError:
+            time.sleep(0.05)
+    # son çare: doğrudan yaz
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    except OSError as e:
+        log("Yazılamadı:", path, e)
 
 
-# ---------- Bakü saati dosyası ----------
+# ---------- Bakü saati ----------
 def clock_loop():
     last = ""
     while True:
@@ -97,7 +112,7 @@ def serve():
     srv.serve_forever()
 
 
-# ---------- Tünel (cloudflared) ----------
+# ---------- Tünel ----------
 def register(url):
     try:
         body = json.dumps({"url": url}).encode()
