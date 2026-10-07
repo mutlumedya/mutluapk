@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-# baba120 relay — Windows Server 2022 sürümü
+# baba120 relay — Windows Server 2022
 # Kurulum:
-#   1) Python 3.12 kur (python.org veya winget)
-#   2) FFmpeg kur ve PATH'e ekle (gyan.dev build önerilir)
-#   3) cloudflared.exe indir, PATH'e ekle veya CF_BIN'i tam yola ayarla
-# Çalıştır:  python relay.py
+#   1) FFmpeg:  C:\ffmpeg\bin\ffmpeg.exe  (yol farklıysa FFMPEG'i düzelt)
+#   2) cloudflared:  C:\cloudflared\cloudflared.exe  (yol farklıysa CF_BIN'i düzelt)
+#   3) python relay.py
 #
 # Ne yapar:
 #  - Worker'ın ham yayınını (?direct=1) alır
@@ -31,6 +30,9 @@ PORT = 8080
 W, H = 1280, 720                               # VDS zorlanırsa 854x480 yap
 VBR = "2500k"                                  # zorlanırsa 1500k yap
 POLL = 3                                       # panel ayarlarını kaç saniyede bir kontrol etsin
+
+FFMPEG = r"C:\ffmpeg\bin\ffmpeg.exe"           # ffmpeg tam yol
+CF_BIN = r"C:\cloudflared\cloudflared.exe"     # cloudflared tam yol
 # ===================================================
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) baba120-relay"
@@ -38,7 +40,6 @@ BAKU = timezone(timedelta(hours=4))            # Azerbaycan saati (UTC+4)
 HOME = os.path.join(os.environ.get("USERPROFILE", "C:\\"), "baba120-relay")
 HLS = os.path.join(HOME, "hls")
 
-# Windows font yolları
 FONTS = [
     r"C:\Windows\Fonts\arial.ttf",
     r"C:\Windows\Fonts\segoeui.ttf",
@@ -47,10 +48,7 @@ FONTS = [
 ]
 FONT = next((f for f in FONTS if os.path.exists(f)), None)
 
-# cloudflared.exe tam yolu (PATH'te değilse burayı düzelt)
-CF_BIN = shutil.which("cloudflared") or os.path.join(
-    os.environ.get("USERPROFILE", "C:\\"), "cloudflared.exe"
-)
+CFLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 def log(*a):
@@ -72,7 +70,7 @@ def write_atomic(path, text):
     os.replace(tmp, path)
 
 
-# ---------- Bakü saati dosyası (her saniye güncellenir) ----------
+# ---------- Bakü saati dosyası ----------
 def clock_loop():
     last = ""
     while True:
@@ -114,21 +112,16 @@ def register(url):
 
 
 def tunnel():
-    if not os.path.exists(CF_BIN) and not shutil.which("cloudflared"):
-        log("cloudflared bulunamadı. CF_BIN yolunu düzelt ya da PATH'e ekle.")
+    if not os.path.exists(CF_BIN):
+        log("cloudflared yok:", CF_BIN)
         return
-    exe = CF_BIN if os.path.exists(CF_BIN) else "cloudflared"
     while True:
-        # Windows'ta CREATE_NO_WINDOW ile konsol penceresi açılmasın
-        creationflags = 0
-        if sys.platform == "win32":
-            creationflags = subprocess.CREATE_NO_WINDOW
         p = subprocess.Popen(
-            [exe, "tunnel", "--url", "http://127.0.0.1:%d" % PORT, "--no-autoupdate"],
+            [CF_BIN, "tunnel", "--url", "http://127.0.0.1:%d" % PORT, "--no-autoupdate"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
-            creationflags=creationflags,
+            creationflags=CFLAGS,
         )
         for line in p.stderr:
             m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
@@ -143,7 +136,6 @@ def tunnel():
 def drawtext(inp, out, file, o):
     fs = max(8, int(H * o["size"] / 100))
     a = o["opacity"] / 100
-    # Windows'ta fontfile yolundaki ters bölü ve iki nokta FFmpeg'de kaçış ister
     font = FONT.replace("\\", "/").replace(":", "\\:")
     return (
         "[%s]drawtext=fontfile='%s':textfile='%s':reload=1:fontsize=%d:"
@@ -154,9 +146,8 @@ def drawtext(inp, out, file, o):
 
 
 def build_cmd(logo, ov):
-    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "warning",
+        FFMPEG, "-hide_banner", "-loglevel", "warning",
         "-fflags", "+genpts+discardcorrupt",
         "-user_agent", UA,
         "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
@@ -174,9 +165,7 @@ def build_cmd(logo, ov):
     if logo:
         lw = max(8, int(W * logo["size"] / 100) // 2 * 2)
         op = logo["opacity"] / 100
-        ch.append(
-            "[1:v]scale=%d:-2,format=rgba,colorchannelmixer=aa=%.2f[lg]" % (lw, op)
-        )
+        ch.append("[1:v]scale=%d:-2,format=rgba,colorchannelmixer=aa=%.2f[lg]" % (lw, op))
         ch.append(
             "[%s][lg]overlay=x=(main_w-overlay_w)*%s/100:y=(main_h-overlay_h)*%s/100[v1]"
             % (last, logo["x"], logo["y"])
@@ -203,7 +192,7 @@ def build_cmd(logo, ov):
         "-hls_segment_filename", os.path.join(HLS, "s%d.ts"),
         os.path.join(HLS, "live.m3u8"),
     ]
-    return cmd, creationflags
+    return cmd
 
 
 def clear_hls():
@@ -215,7 +204,6 @@ def clear_hls():
 
 
 def get_logo(now, cache):
-    """Oynayan bölümün (yoksa genel) logosunu indirir. Yoksa None döner."""
     lg = now.get("logo") or {}
     if not (lg.get("on") and lg.get("url")):
         return None
@@ -237,6 +225,8 @@ def get_logo(now, cache):
 def main():
     if not FONT:
         log("UYARI: yazı tipi bulunamadı, saat ve film adı yazılamaz.")
+    if not os.path.exists(FFMPEG):
+        log("UYARI: FFmpeg bulunamadı:", FFMPEG)
     os.makedirs(HLS, exist_ok=True)
     os.chdir(HOME)
     write_atomic("info.txt", " ")
@@ -284,8 +274,7 @@ def main():
                 if dead and time.time() - last_fail >= 5:
                     clear_hls()
                     log("FFmpeg başlıyor")
-                    cmd, cflags = build_cmd(logo, ov)
-                    proc = subprocess.Popen(cmd, creationflags=cflags)
+                    proc = subprocess.Popen(build_cmd(logo, ov), creationflags=CFLAGS)
                     cur_sig = sig
                     last_fail = time.time()
             else:
