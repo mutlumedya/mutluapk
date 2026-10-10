@@ -1,7 +1,7 @@
 <?php
 /*
  |=====================================================================
- |  ÇOK KANALLI YAYIN PANELİ  v3  ·  Mobil Dostu  ·  Donma Çözümlü
+ |  ÇOK KANALLI YAYIN PANELİ  v4  ·  Mobil Dostu  ·  Donma Çözümlü
  |  Tek dosya PHP + FFmpeg  |  Windows Server / XAMPP / IIS / WAMP
  |
  |  Kurulum:
