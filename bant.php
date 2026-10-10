@@ -1,15 +1,13 @@
 <?php
 /*
  |=====================================================================
- |  ÇOK KANALLI YAYIN PANELİ  v5
+ |  ÇOK KANALLI YAYIN PANELİ  v6
  |  Tek dosya PHP + FFmpeg | Windows / XAMPP / IIS / WAMP
  |
- |  v4 yenilikleri:
- |   - Durdur ANINDA çalışır (yetim ffmpeg katliamı)
- |   - Copy modunda logo/bant otomatik encode'a geçer
- |   - Alt bant konumu: sol/orta/sağ + üst/alt
- |   - Saat gösterimi: sol/orta/sağ + üst/alt
- |   - Playlist'te sıradaki bölüm adı otomatik yazılır
+ |  v5 yenilikleri:
+ |   - Saat ayırıcı seçimi: noktalı / iki nokta / boşluk
+ |   - URL'den logo yükleme (PNG/JPG/GIF/WEBP)
+ |   - Saat escape hatası düzeltildi (drawtext box özelliği)
  |
  |  Kurulum:
  |   1) index.php olarak web köküne at
@@ -175,17 +173,18 @@ function default_channel($name) {
         // Logo
         'logo_enabled' => 0,
         'logo_file' => '',
+        'logo_url' => '',
         'logo_pos' => 'tr',
         'logo_width' => 160,
         'logo_opacity' => 100,
         'logo_margin' => 25,
 
-        // Alt Bant (yazı)
+        // Alt Bant
         'band_enabled' => 0,
         'band_text' => '',
         'band_style' => 'scroll',
-        'band_pos' => 'bottom',        // bottom | top
-        'band_align' => 'center',      // left | center | right  (static iken)
+        'band_pos' => 'bottom',
+        'band_align' => 'center',
         'band_height' => 50,
         'band_font' => 'arial',
         'band_font_size' => 28,
@@ -196,16 +195,17 @@ function default_channel($name) {
 
         // Saat
         'clock_enabled' => 0,
-        'clock_pos' => 'top',          // top | bottom
-        'clock_align' => 'right',      // left | center | right
+        'clock_pos' => 'top',
+        'clock_align' => 'right',
         'clock_font' => 'arialbd',
         'clock_font_size' => 28,
         'clock_font_color' => '#ffffff',
         'clock_bg_color' => '#000000',
         'clock_bg_opacity' => 50,
-        'clock_box' => 1,              // arka plan kutusu
+        'clock_box' => 1,
         'clock_margin' => 20,
-        'clock_format' => '24',        // 24 | 12
+        'clock_format' => '24',
+        'clock_sep' => 'dot',
 
         // Encode
         'res' => 'orig',
@@ -219,8 +219,7 @@ function default_channel($name) {
         'restart_delay' => 3,
         'loop_playlist' => 1,
 
-        // Playlist
-        'show_title_on_band' => 0,     // playlist'te sıradaki başlığı banda yaz
+        'show_title_on_band' => 0,
     ];
 }
 function load_channels() {
@@ -233,7 +232,6 @@ function save_channels($c) { return write_json(CHANNELS_FILE, $c); }
 function get_channel($slug) {
     $c = load_channels();
     if (!isset($c[$slug])) return null;
-    // eksik anahtarları tamamla
     return array_merge(default_channel($c[$slug]['name'] ?? $slug), $c[$slug]);
 }
 function save_channel($slug, $cfg) {
@@ -251,7 +249,7 @@ function parse_channel_post($post, $old) {
     global $FONTS, $RES, $VC, $PRESETS;
     $c = $old;
     if (isset($post['name'])) $c['name'] = clean_str($post['name']);
-    foreach (['input_url', 'input_ua', 'input_extra', 'out_url'] as $k) {
+    foreach (['input_url', 'input_ua', 'input_extra', 'out_url', 'logo_url'] as $k) {
         if (isset($post[$k])) $c[$k] = clean_str($post[$k]);
     }
     if (isset($post['playlist'])) {
@@ -277,6 +275,7 @@ function parse_channel_post($post, $old) {
     $c['clock_align'] = pick($post['clock_align'] ?? '', ['left', 'center', 'right'], 'right');
     $c['clock_font'] = pick($post['clock_font'] ?? '', array_keys($FONTS), 'arialbd');
     $c['clock_format'] = pick($post['clock_format'] ?? '', ['24', '12'], '24');
+    $c['clock_sep'] = pick($post['clock_sep'] ?? '', ['colon', 'dot', 'space'], 'dot');
     $c['res'] = pick($post['res'] ?? '', $RES, 'orig');
     $c['vcodec'] = pick($post['vcodec'] ?? '', $VC, 'libx264');
     $c['preset'] = pick($post['preset'] ?? '', $PRESETS, 'veryfast');
@@ -308,7 +307,6 @@ function parse_channel_post($post, $old) {
     $t = preg_replace('/[\x00-\x1F\x7F]/', '', $t);
     $c['band_text'] = function_exists('mb_substr') ? mb_substr(trim($t), 0, 1500, 'UTF-8') : substr(trim($t), 0, 1500);
 
-    // Logo veya bant açıksa encode zorunlu (copy'de filtre çalışmaz)
     $needLogo  = !empty($c['logo_enabled']) && !empty($c['logo_file']);
     $needBand  = !empty($c['band_enabled']) && trim($c['band_text']) !== '';
     $needClock = !empty($c['clock_enabled']);
@@ -318,7 +316,6 @@ function parse_channel_post($post, $old) {
     return $c;
 }
 
-/* Playlist hazırla — concat.txt üret */
 function prepare_playlist($slug, $cfg) {
     $dir = chan_data($slug);
     if (!is_dir($dir)) @mkdir($dir, 0777, true);
@@ -410,7 +407,6 @@ function build_args($slug, $cfg, $S, &$err) {
         array_push($a, '-i', $in);
     }
 
-    // Logo/bant/saat açıksa copy'den encode'a zorla
     $useLogo  = $cfg['logo_enabled'] && $cfg['logo_file'] && is_file(chan_data($slug) . DS . $cfg['logo_file']);
     $useBand  = $cfg['band_enabled'] && trim($cfg['band_text']) !== '';
     $useClock = !empty($cfg['clock_enabled']);
@@ -432,7 +428,7 @@ function build_args($slug, $cfg, $S, &$err) {
             $vf[] = "scale={$w}:{$hh}:force_original_aspect_ratio=decrease,setsar=1,pad={$w}:{$hh}:(ow-iw)/2:(oh-ih)/2";
         }
 
-        // === ALT BANT (metin) ===
+        // === ALT BANT ===
         if ($useBand) {
             $bh = (int)$cfg['band_height'];
             $op = number_format($cfg['band_bg_opacity'] / 100, 2, '.', '');
@@ -441,13 +437,11 @@ function build_args($slug, $cfg, $S, &$err) {
             $by  = $cfg['band_pos'] === 'top' ? '0' : "ih-$bh";
             $vf[] = "drawbox=x=0:y=$by:w=iw:h=$bh:color=$bgc@$op:t=fill";
 
-            // Dikey: bant içinde ortala
             $ty = $cfg['band_pos'] === 'top' ? "(($bh-text_h)/2)" : "(h-$bh+($bh-text_h)/2)";
 
             if ($cfg['band_style'] === 'scroll') {
                 $tx = "w-mod(t*{$cfg['band_speed']},w+text_w)";
             } else {
-                // sabit — sol / orta / sağ
                 $align = $cfg['band_align'] ?? 'center';
                 if ($align === 'left')       $tx = "20";
                 elseif ($align === 'right')  $tx = "w-text_w-20";
@@ -460,39 +454,42 @@ function build_args($slug, $cfg, $S, &$err) {
         if ($useClock) {
             $fs2 = (int)$cfg['clock_font_size'];
             $mgn = (int)$cfg['clock_margin'];
-            $op2 = number_format($cfg['clock_bg_opacity'] / 100, 2, '.', '');
+            $fc2 = '0x' . substr($cfg['clock_font_color'], 1);
             $bgc2 = '0x' . substr($cfg['clock_bg_color'], 1);
-            $fc2  = '0x' . substr($cfg['clock_font_color'], 1);
+            $op2  = number_format($cfg['clock_bg_opacity'] / 100, 2, '.', '');
 
-            $fmt = ($cfg['clock_format'] === '12') ? '%I\\:%M\\:%S %p' : '%H\\:%M\\:%S';
-            $cx = ($cfg['clock_align'] === 'left') ? (string)$mgn
-                : (($cfg['clock_align'] === 'right') ? "w-text_w-$mgn" : "(w-text_w)/2");
+            // Ayırıcı seçimi — ':' escape sorununu önlemek için varsayılan '.'
+            $sep = $cfg['clock_sep'] ?? 'dot';
+            if ($sep === 'colon') {
+                $sepChr = '\\\\:';           // FFmpeg filter içinde escape'li iki nokta
+            } elseif ($sep === 'space') {
+                $sepChr = ' ';
+            } else {
+                $sepChr = '.';               // nokta — escape gerektirmez
+            }
+
+            if ($cfg['clock_format'] === '12') {
+                $txt = "%{localtime\\:%I{$sepChr}%M{$sepChr}%S %p}";
+            } else {
+                $txt = "%{localtime\\:%H{$sepChr}%M{$sepChr}%S}";
+            }
+
+            if ($cfg['clock_align'] === 'left')       $cx = (string)$mgn;
+            elseif ($cfg['clock_align'] === 'right')  $cx = "w-text_w-$mgn";
+            else                                       $cx = "(w-text_w)/2";
+
             $cy = ($cfg['clock_pos'] === 'top') ? (string)$mgn : "h-text_h-$mgn";
+
+            $dt = "drawtext=fontfile=font_clock.ttf:text='$txt'"
+                . ":fontsize=$fs2"
+                . ":fontcolor=$fc2"
+                . ":shadowcolor=black@0.5:shadowx=1:shadowy=1"
+                . ":x='$cx':y='$cy'";
 
             if (!empty($cfg['clock_box'])) {
-                $boxPadX = 10; $boxPadY = 6;
-                $bx = ($cfg['clock_align'] === 'left') ? ($mgn - $boxPadX)
-                    : (($cfg['clock_align'] === 'right') ? "w-text_w-{$mgn}-{$boxPadX}" : "(w-text_w)/2-{$boxPadX}");
-                $byy = ($cfg['clock_pos'] === 'top') ? ($mgn - $boxPadY) : "h-text_h-{$mgn}-{$boxPadY}";
-                $vf[] = "drawbox=x=$bx:y=$byy:w=text_w+" . ($boxPadX*2) . ":h=text_h+" . ($boxPadY*2) . ":color=$bgc2@$op2:t=fill";
+                $dt .= ":box=1:boxcolor=$bgc2@$op2:boxborderw=8";
             }
-            $vf[] = "drawtext=fontfile=font_clock.ttf:timecode='00\\:00\\:00\\:00':r=1:fontsize=$fs2:fontcolor=$fc2:x='$cx':y='$cy':box=0";
-            // timecode değil gerçek saat için text='%{localtime...}'
-            // ffmpeg drawtext text= kullanmak daha doğru:
-        }
-
-        // === SAAT (doğru ffmpeg ifadesi) ===
-        if ($useClock) {
-            // önceki eklenen timecode drawtext'i kaldır, gerçek saat ekle
-            $vf = array_values(array_filter($vf, function($x){ return strpos($x, "timecode=") === false; }));
-            $fs2 = (int)$cfg['clock_font_size'];
-            $mgn = (int)$cfg['clock_margin'];
-            $fc2 = '0x' . substr($cfg['clock_font_color'], 1);
-            $fmtTxt = ($cfg['clock_format'] === '12') ? '%{localtime\\\\:%I\\\\:%M\\\\:%S %p}' : '%{localtime\\\\:%H\\\\:%M\\\\:%S}';
-            $cx = ($cfg['clock_align'] === 'left') ? (string)$mgn
-                : (($cfg['clock_align'] === 'right') ? "w-text_w-$mgn" : "(w-text_w)/2");
-            $cy = ($cfg['clock_pos'] === 'top') ? (string)$mgn : "h-text_h-$mgn";
-            $vf[] = "drawtext=fontfile=font_clock.ttf:text='$fmtTxt':fontsize=$fs2:fontcolor=$fc2:shadowcolor=black@0.5:shadowx=1:shadowy=1:x='$cx':y='$cy'";
+            $vf[] = $dt;
         }
 
         if (!$vf) $vf[] = 'null';
@@ -550,7 +547,7 @@ function build_args($slug, $cfg, $S, &$err) {
     return $a;
 }
 
-/* ================================================================ RUNNER (v4 - anında stop) */
+/* ================================================================ RUNNER */
 function write_runner($slug, $cfg) {
     $dir = chan_data($slug);
     $auto = $cfg['autorestart'] ? '$true' : '$false';
@@ -697,6 +694,7 @@ function start_channel($slug) {
     }
 
     @file_put_contents($dir . DS . 'args.txt', implode(' ', array_map('q', $args)));
+    @file_put_contents($dir . DS . 'args_list.txt', json_encode($args, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     @file_put_contents($dir . DS . 'ffpath.txt', $S['ffmpeg_path']);
     @file_put_contents($dir . DS . 'ffmpeg.log', '');
     @unlink($dir . DS . 'stop.flag');
@@ -713,7 +711,6 @@ function start_channel($slug) {
     return ['ok' => $ok, 'msg' => $ok ? 'Başlatıldı.' : 'Başlamadı, logu kontrol edin.'];
 }
 
-/* v4: ANINDA durduran sürüm */
 function stop_channel($slug) {
     $dir = chan_data($slug);
     @file_put_contents($dir . DS . 'stop.flag', '1');
@@ -721,11 +718,9 @@ function stop_channel($slug) {
     $r = read_pid($dir . DS . 'runner.pid');
     $f = read_pid($dir . DS . 'ffmpeg.pid');
 
-    // 1) Doğrudan PID ile öldür
     if ($f) @exec('taskkill /F /T /PID ' . $f . ' 2>NUL');
     if ($r) @exec('taskkill /F /T /PID ' . $r . ' 2>NUL');
 
-    // 2) Klasör yoluna göre yetim ffmpeg.exe'leri bul ve öldür
     $safeDir = str_replace('\\', '\\\\', $dir);
     $psKill = 'Get-CimInstance Win32_Process -Filter "Name = \'ffmpeg.exe\'" | '
             . 'Where-Object { $_.CommandLine -like \'*' . $safeDir . '*\' } | '
@@ -735,10 +730,8 @@ function stop_channel($slug) {
     @unlink($dir . DS . 'runner.pid');
     @unlink($dir . DS . 'ffmpeg.pid');
 
-    // 3) Runner'ın stop.flag'i görüp çıkmasını bekle
     usleep(1000000);
 
-    // 4) Hâlâ hayattaysa ikinci tur
     if ($f && pid_alive($f)) @exec('taskkill /F /PID ' . $f . ' 2>NUL');
     if ($r && pid_alive($r)) @exec('taskkill /F /PID ' . $r . ' 2>NUL');
 
@@ -782,7 +775,7 @@ if (!$authed) {
 <form method="post" class="w-full max-w-sm bg-slate-900/80 backdrop-blur border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl">
     <div class="flex items-center gap-3 mb-6">
         <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-xl">📡</div>
-        <div><h1 class="text-xl font-bold">Yayın Paneli</h1><p class="text-xs text-slate-400">Çok kanallı FFmpeg v4</p></div>
+        <div><h1 class="text-xl font-bold">Yayın Paneli</h1><p class="text-xs text-slate-400">Çok kanallı FFmpeg v5</p></div>
     </div>
     <?php if (!empty($loginErr)): ?><div class="mb-4 text-sm bg-red-500/10 border border-red-500/40 text-red-300 rounded-lg px-3 py-2"><?= h($loginErr) ?></div><?php endif; ?>
     <label class="block text-xs text-slate-400 mb-1">Kullanıcı adı</label>
@@ -861,7 +854,7 @@ if (isset($_GET['api'])) {
                           'band_font','band_font_size','band_font_color','band_bg_color','band_bg_opacity','band_height',
                           'band_speed','logo_width','logo_opacity','logo_margin','hls_time','hls_list','autorestart','restart_delay',
                           'clock_pos','clock_align','clock_font','clock_font_size','clock_font_color','clock_bg_color','clock_bg_opacity',
-                          'clock_box','clock_margin','clock_format'] as $k) {
+                          'clock_box','clock_margin','clock_format','clock_sep'] as $k) {
                     $chans[$slugNew][$k] = $base[$k];
                 }
             }
@@ -922,6 +915,8 @@ if (isset($_GET['api'])) {
             if ($err) jout(['ok' => false, 'msg' => $err]);
             jout(['ok' => true, 'cmd' => '"' . $S['ffmpeg_path'] . '" ' . implode(' ', array_map('q', $args))]);
         }
+
+        /* Logo dosyadan yükleme */
         case 'logo_upload': {
             $c = get_channel($slug);
             if (!$c) jout(['ok' => false, 'msg' => 'Kanal yok.']);
@@ -940,15 +935,74 @@ if (isset($_GET['api'])) {
             save_channel($slug, $c);
             jout(['ok' => true, 'msg' => 'Yüklendi.', 'file' => $name]);
         }
+
+        /* Logo URL'den indir */
+        case 'logo_upload_url': {
+            $c = get_channel($slug);
+            if (!$c) jout(['ok' => false, 'msg' => 'Kanal yok.']);
+            $url = clean_str($_POST['logo_url'] ?? '');
+            if ($url === '' || !preg_match('~^https?://~i', $url)) {
+                jout(['ok' => false, 'msg' => 'Geçerli bir http/https URL girin.']);
+            }
+
+            $ctx = stream_context_create([
+                'http' => [
+                    'timeout' => 15,
+                    'user_agent' => 'Mozilla/5.0 (YayinPaneli v5)',
+                    'follow_location' => 1,
+                    'max_redirects' => 5,
+                ],
+                'ssl' => ['verify_peer' => false, 'verify_peer_name' => false],
+            ]);
+            $data = @file_get_contents($url, false, $ctx);
+            if ($data === false || $data === '') {
+                jout(['ok' => false, 'msg' => 'URL indirilemedi (bağlantı/ağ hatası).']);
+            }
+            if (strlen($data) > 8 * 1024 * 1024) {
+                jout(['ok' => false, 'msg' => 'Dosya 8 MB üstünde.']);
+            }
+
+            $tmp = tempnam(sys_get_temp_dir(), 'logo_');
+            if ($tmp === false || !@file_put_contents($tmp, $data)) {
+                jout(['ok' => false, 'msg' => 'Geçici dosya yazılamadı.']);
+            }
+            $info = @getimagesize($tmp);
+            $map = [IMAGETYPE_PNG=>'png', IMAGETYPE_JPEG=>'jpg', IMAGETYPE_GIF=>'gif', IMAGETYPE_WEBP=>'webp'];
+            if (!$info || !isset($map[$info[2]])) {
+                @unlink($tmp);
+                jout(['ok' => false, 'msg' => 'Resim türü desteklenmiyor. PNG/JPG/GIF/WEBP olmalı.']);
+            }
+            $ext = $map[$info[2]];
+
+            $dir = chan_data($slug);
+            if (!is_dir($dir)) @mkdir($dir, 0777, true);
+            foreach (glob($dir . DS . 'logo.*') ?: [] as $old) @unlink($old);
+            $name = 'logo.' . $ext;
+            $target = $dir . DS . $name;
+            if (!@rename($tmp, $target)) {
+                if (!@copy($tmp, $target)) {
+                    @unlink($tmp);
+                    jout(['ok' => false, 'msg' => 'Kaydedilemedi (klasör yazma izni).']);
+                }
+                @unlink($tmp);
+            }
+            $c['logo_file'] = $name;
+            $c['logo_url'] = $url;
+            save_channel($slug, $c);
+            jout(['ok' => true, 'msg' => 'URL\'den yüklendi.', 'file' => $name]);
+        }
+
         case 'logo_delete': {
             $c = get_channel($slug);
             if (!$c) jout(['ok' => false, 'msg' => 'Kanal yok.']);
             $dir = chan_data($slug);
             foreach (glob($dir . DS . 'logo.*') ?: [] as $old) @unlink($old);
             $c['logo_file'] = '';
+            $c['logo_url'] = '';
             save_channel($slug, $c);
             jout(['ok' => true, 'msg' => 'Silindi.']);
         }
+
         case 'settings': {
             $s = $S;
             if (isset($_POST['ffmpeg_path'])) $s['ffmpeg_path'] = clean_str($_POST['ffmpeg_path']);
@@ -1004,7 +1058,7 @@ $BASE = base_url();
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#020617">
-<title>Yayın Paneli v4</title>
+<title>Yayın Paneli v5</title>
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 <style>
     *{-webkit-tap-highlight-color:transparent}
@@ -1069,7 +1123,7 @@ $BASE = base_url();
             <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-lg flex-none">📡</div>
             <div>
                 <h1 class="text-lg sm:text-xl font-bold leading-tight">Yayın Paneli</h1>
-                <p class="text-[11px] text-slate-400 hidden sm:block">Çok kanallı FFmpeg · v4</p>
+                <p class="text-[11px] text-slate-400 hidden sm:block">Çok kanallı FFmpeg · v5</p>
             </div>
         </div>
         <button id="menuBtn" class="btn bg-slate-800 hover:bg-slate-700 sm:hidden">☰</button>
@@ -1096,7 +1150,7 @@ $BASE = base_url();
 
     <div id="chGrid" class="grid-ch"></div>
 
-    <p class="text-center text-xs text-slate-600 mt-6 mb-2">Yayın Paneli · PHP <?= h(PHP_VERSION) ?> · v4</p>
+    <p class="text-center text-xs text-slate-600 mt-6 mb-2">Yayın Paneli · PHP <?= h(PHP_VERSION) ?> · v5</p>
 </div>
 
 <!-- Kanal düzenleme -->
@@ -1217,16 +1271,28 @@ $BASE = base_url();
                     <h3 class="font-semibold text-sm">Logo</h3>
                     <label class="flex items-center gap-2 text-sm"><span class="sw"><input type="checkbox" name="logo_enabled"><span></span></span></label>
                 </div>
+
                 <div class="flex flex-wrap items-center gap-3 p-3 rounded-xl border border-dashed border-slate-700 bg-slate-950 mb-3">
                     <div class="w-24 h-16 rounded-lg bg-[repeating-conic-gradient(#1e293b_0_25%,#0f172a_0_50%)] bg-[length:16px_16px] flex items-center justify-center overflow-hidden flex-none">
                         <img id="logoThumb" class="max-w-full max-h-full hidden" alt="">
                         <span id="logoNone" class="text-[11px] text-slate-500">Yok</span>
                     </div>
                     <div class="flex-1 min-w-[10rem]">
+                        <label class="lbl">📁 Dosyadan yükle</label>
                         <input type="file" id="logoFile" accept="image/png,image/jpeg,image/gif,image/webp" class="w-full text-xs text-slate-300 file:mr-2 file:rounded-lg file:border-0 file:bg-indigo-600 file:px-3 file:py-2 file:text-white file:cursor-pointer file:text-xs">
                     </div>
                     <button type="button" id="bLogoDel" class="btn bg-slate-800 hover:bg-red-600/80">Sil</button>
                 </div>
+
+                <div class="p-3 rounded-xl border border-dashed border-slate-700 bg-slate-950 mb-3">
+                    <label class="lbl">🔗 URL'den yükle (PNG / JPG / GIF / WEBP)</label>
+                    <div class="flex flex-col sm:flex-row gap-2 mt-1">
+                        <input id="logoUrl" class="inp font-mono text-xs flex-1" placeholder="https://ornek.com/logo.png">
+                        <button type="button" id="bLogoUrl" class="btn bg-fuchsia-600 hover:bg-fuchsia-500 text-xs">🔗 URL'den Yükle</button>
+                    </div>
+                    <p class="hint">Sunucunun URL'ye erişebilmesi gerekir. İndirilen resim sunucuya kaydedilir.</p>
+                </div>
+
                 <div class="grid sm:grid-cols-2 gap-3">
                     <div><label class="lbl">Konum</label>
                         <select name="logo_pos" class="inp"><option value="tl">Sol üst</option><option value="tr">Sağ üst</option><option value="bl">Sol alt</option><option value="br">Sağ alt</option><option value="center">Orta</option></select></div>
@@ -1290,7 +1356,7 @@ $BASE = base_url();
                     <label class="flex items-center gap-2 text-sm"><span class="sw"><input type="checkbox" name="clock_enabled"><span></span></span></label>
                 </div>
 
-                <div class="grid sm:grid-cols-2 gap-3">
+                <div class="grid sm:grid-cols-3 gap-3">
                     <div>
                         <label class="lbl">Konum (üst / alt)</label>
                         <select name="clock_pos" class="inp">
@@ -1301,8 +1367,16 @@ $BASE = base_url();
                     <div>
                         <label class="lbl">Format</label>
                         <select name="clock_format" class="inp">
-                            <option value="24">24 saat (14:23:05)</option>
-                            <option value="12">12 saat (02:23:05 PM)</option>
+                            <option value="24">24 saat</option>
+                            <option value="12">12 saat</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="lbl">Ayırıcı</label>
+                        <select name="clock_sep" class="inp">
+                            <option value="dot">Noktalı (14.23.05)</option>
+                            <option value="colon">İki nokta (14:23:05)</option>
+                            <option value="space">Boşluklu (14 23 05)</option>
                         </select>
                     </div>
                 </div>
@@ -1504,7 +1578,7 @@ document.addEventListener('click', async e => {
     }
 });
 
-/* ---- Segmented (konum) ---- */
+/* ---- Segmented ---- */
 function bindSegs() {
     $$('.seg').forEach(seg => {
         const name = seg.dataset.name;
@@ -1512,9 +1586,6 @@ function bindSegs() {
             b.onclick = () => {
                 seg.querySelectorAll('button').forEach(x => x.classList.remove('on'));
                 b.classList.add('on');
-                const inp = seg.parentElement.querySelector('input[type=hidden][name="' + name + '"]')
-                         || document.querySelector('#cfg input[name="' + name + '"]');
-                // gizli input yoksa oluştur
                 let hidden = document.querySelector('#cfg input[type=hidden][name="' + name + '"]');
                 if (!hidden) {
                     hidden = document.createElement('input');
@@ -1522,7 +1593,6 @@ function bindSegs() {
                     $('#cfg').appendChild(hidden);
                 }
                 hidden.value = b.dataset.val;
-                if (name === 'band_align' || name === 'clock_align') updateModeWarn();
             };
         });
     });
@@ -1628,11 +1698,20 @@ $('#logoFile').onchange = async e => {
     if (r.ok) { CH.logo_file = r.file; logoUi(); }
     e.target.value = '';
 };
+$('#bLogoUrl').onclick = async () => {
+    const url = $('#logoUrl').value.trim();
+    if (!/^https?:\/\//i.test(url)) return toast('http:// veya https:// ile başlamalı', false);
+    const btn = $('#bLogoUrl'); btn.disabled = true; const orig = btn.textContent; btn.textContent = '⏳ Yükleniyor...';
+    const r = await api('logo_upload_url', { logo_url: url }, chSlug);
+    btn.disabled = false; btn.textContent = orig;
+    toast(r.msg, r.ok);
+    if (r.ok) { CH.logo_file = r.file; CH.logo_url = url; logoUi(); $('#logoUrl').value = ''; }
+};
 $('#bLogoDel').onclick = async () => {
     if (!confirm('Logo silinsin mi?')) return;
     const r = await api('logo_delete', {}, chSlug);
     toast(r.msg, r.ok);
-    if (r.ok) { CH.logo_file = ''; logoUi(); }
+    if (r.ok) { CH.logo_file = ''; CH.logo_url = ''; logoUi(); }
 };
 
 async function pollChannel() {
