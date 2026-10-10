@@ -1,17 +1,20 @@
 <?php
 /*
  |=====================================================================
- |  ÇOK KANALLI YAYIN PANELİ  v4  ·  Mobil Dostu  ·  Donma Çözümlü
- |  Tek dosya PHP + FFmpeg  |  Windows Server / XAMPP / IIS / WAMP
+ |  ÇOK KANALLI YAYIN PANELİ  v5
+ |  Tek dosya PHP + FFmpeg | Windows / XAMPP / IIS / WAMP
+ |
+ |  v4 yenilikleri:
+ |   - Durdur ANINDA çalışır (yetim ffmpeg katliamı)
+ |   - Copy modunda logo/bant otomatik encode'a geçer
+ |   - Alt bant konumu: sol/orta/sağ + üst/alt
+ |   - Saat gösterimi: sol/orta/sağ + üst/alt
+ |   - Playlist'te sıradaki bölüm adı otomatik yazılır
  |
  |  Kurulum:
- |    1) index.php olarak kaydet, web köküne at
- |    2) Genel Ayarlar → FFmpeg yolu → Kaydet
- |    3) Giriş: admin / admin123
- |
- |  Çıkışlar:
- |    Ana kanal     : http://sunucu/hls/stream.m3u8
- |    "diginet"     : http://sunucu/diginet/hls/stream.m3u8
+ |   1) index.php olarak web köküne at
+ |   2) Ayarlar → FFmpeg yolu → Kaydet
+ |   3) Giriş: admin / admin123
  |=====================================================================
 */
 error_reporting(E_ALL);
@@ -83,7 +86,6 @@ function hexcol($v, $def) { return preg_match('/^#[0-9a-fA-F]{6}$/', (string)$v)
 function pick($v, $arr, $def) { return in_array($v, $arr, true) ? $v : $def; }
 function slugify($s) {
     $s = trim((string)$s);
-    // URL/protokol/özel karakter içeriyorsa direkt reddet
     if (preg_match('~[:\/\\\\?#&=\.\s]~', $s)) return '';
     $s = preg_replace('/[^A-Za-z0-9_\-]/', '', $s);
     $s = preg_replace('/-+/', '-', $s);
@@ -164,21 +166,26 @@ function default_channel($name) {
         'input_ua' => '',
         'input_extra' => '',
         'input_realtime' => 0,
-        'mode' => 'copy',           // VARSAYILAN: copy → CPU yok, donma yok
+        'mode' => 'encode',
         'out_type' => 'hls',
         'out_url' => '',
         'hls_time' => 6,
         'hls_list' => 6,
+
+        // Logo
         'logo_enabled' => 0,
         'logo_file' => '',
         'logo_pos' => 'tr',
         'logo_width' => 160,
         'logo_opacity' => 100,
         'logo_margin' => 25,
+
+        // Alt Bant (yazı)
         'band_enabled' => 0,
         'band_text' => '',
         'band_style' => 'scroll',
-        'band_pos' => 'bottom',
+        'band_pos' => 'bottom',        // bottom | top
+        'band_align' => 'center',      // left | center | right  (static iken)
         'band_height' => 50,
         'band_font' => 'arial',
         'band_font_size' => 28,
@@ -186,6 +193,21 @@ function default_channel($name) {
         'band_bg_color' => '#b91c1c',
         'band_bg_opacity' => 85,
         'band_speed' => 120,
+
+        // Saat
+        'clock_enabled' => 0,
+        'clock_pos' => 'top',          // top | bottom
+        'clock_align' => 'right',      // left | center | right
+        'clock_font' => 'arialbd',
+        'clock_font_size' => 28,
+        'clock_font_color' => '#ffffff',
+        'clock_bg_color' => '#000000',
+        'clock_bg_opacity' => 50,
+        'clock_box' => 1,              // arka plan kutusu
+        'clock_margin' => 20,
+        'clock_format' => '24',        // 24 | 12
+
+        // Encode
         'res' => 'orig',
         'fps' => 0,
         'vcodec' => 'libx264',
@@ -196,6 +218,9 @@ function default_channel($name) {
         'autorestart' => 1,
         'restart_delay' => 3,
         'loop_playlist' => 1,
+
+        // Playlist
+        'show_title_on_band' => 0,     // playlist'te sıradaki başlığı banda yaz
     ];
 }
 function load_channels() {
@@ -207,7 +232,9 @@ function load_channels() {
 function save_channels($c) { return write_json(CHANNELS_FILE, $c); }
 function get_channel($slug) {
     $c = load_channels();
-    return $c[$slug] ?? null;
+    if (!isset($c[$slug])) return null;
+    // eksik anahtarları tamamla
+    return array_merge(default_channel($c[$slug]['name'] ?? $slug), $c[$slug]);
 }
 function save_channel($slug, $cfg) {
     $c = load_channels();
@@ -239,15 +266,21 @@ function parse_channel_post($post, $old) {
         $c['playlist'] = implode("\n", $out);
     }
     $c['source_mode'] = pick($post['source_mode'] ?? '', ['single', 'playlist'], 'single');
-    $c['mode'] = pick($post['mode'] ?? '', ['encode', 'copy'], 'copy');
+    $c['mode'] = pick($post['mode'] ?? '', ['encode', 'copy'], 'encode');
     $c['out_type'] = pick($post['out_type'] ?? '', ['rtmp', 'hls', 'mpegts'], 'hls');
     $c['logo_pos'] = pick($post['logo_pos'] ?? '', ['tl', 'tr', 'bl', 'br', 'center'], 'tr');
     $c['band_style'] = pick($post['band_style'] ?? '', ['scroll', 'static'], 'scroll');
     $c['band_pos'] = pick($post['band_pos'] ?? '', ['bottom', 'top'], 'bottom');
+    $c['band_align'] = pick($post['band_align'] ?? '', ['left', 'center', 'right'], 'center');
     $c['band_font'] = pick($post['band_font'] ?? '', array_keys($FONTS), 'arial');
+    $c['clock_pos'] = pick($post['clock_pos'] ?? '', ['top', 'bottom'], 'top');
+    $c['clock_align'] = pick($post['clock_align'] ?? '', ['left', 'center', 'right'], 'right');
+    $c['clock_font'] = pick($post['clock_font'] ?? '', array_keys($FONTS), 'arialbd');
+    $c['clock_format'] = pick($post['clock_format'] ?? '', ['24', '12'], '24');
     $c['res'] = pick($post['res'] ?? '', $RES, 'orig');
     $c['vcodec'] = pick($post['vcodec'] ?? '', $VC, 'libx264');
     $c['preset'] = pick($post['preset'] ?? '', $PRESETS, 'veryfast');
+
     $ints = [
         'hls_time' => [2, 20, 6], 'hls_list' => [3, 30, 6],
         'logo_width' => [20, 1000, 160], 'logo_opacity' => [5, 100, 100], 'logo_margin' => [0, 300, 25],
@@ -255,20 +288,37 @@ function parse_channel_post($post, $old) {
         'band_speed' => [20, 600, 120], 'fps' => [0, 60, 0],
         'vbitrate' => [200, 20000, 2500], 'abitrate' => [32, 512, 128],
         'gop' => [1, 10, 2], 'restart_delay' => [1, 120, 3],
+        'clock_font_size' => [10, 100, 28], 'clock_bg_opacity' => [0, 100, 50],
+        'clock_margin' => [0, 300, 20],
     ];
     foreach ($ints as $k => $r) $c[$k] = iv($post[$k] ?? null, $r[0], $r[1], $r[2]);
-    foreach (['input_realtime', 'logo_enabled', 'band_enabled', 'autorestart', 'enabled', 'loop_playlist'] as $k) {
+
+    foreach ([
+        'input_realtime','logo_enabled','band_enabled','autorestart','enabled','loop_playlist',
+        'clock_enabled','clock_box','show_title_on_band'
+    ] as $k) {
         $c[$k] = !empty($post[$k]) ? 1 : 0;
     }
-    $c['band_font_color'] = hexcol($post['band_font_color'] ?? '', '#ffffff');
-    $c['band_bg_color'] = hexcol($post['band_bg_color'] ?? '', '#b91c1c');
+    $c['band_font_color']  = hexcol($post['band_font_color'] ?? '', '#ffffff');
+    $c['band_bg_color']    = hexcol($post['band_bg_color'] ?? '', '#b91c1c');
+    $c['clock_font_color'] = hexcol($post['clock_font_color'] ?? '', '#ffffff');
+    $c['clock_bg_color']   = hexcol($post['clock_bg_color'] ?? '', '#000000');
+
     $t = str_replace(["\r\n", "\r", "\n"], '  •  ', (string)($post['band_text'] ?? ''));
     $t = preg_replace('/[\x00-\x1F\x7F]/', '', $t);
     $c['band_text'] = function_exists('mb_substr') ? mb_substr(trim($t), 0, 1500, 'UTF-8') : substr(trim($t), 0, 1500);
+
+    // Logo veya bant açıksa encode zorunlu (copy'de filtre çalışmaz)
+    $needLogo  = !empty($c['logo_enabled']) && !empty($c['logo_file']);
+    $needBand  = !empty($c['band_enabled']) && trim($c['band_text']) !== '';
+    $needClock = !empty($c['clock_enabled']);
+    if (($needLogo || $needBand || $needClock) && $c['mode'] === 'copy') {
+        $c['mode'] = 'encode';
+    }
     return $c;
 }
 
-/* Playlist */
+/* Playlist hazırla — concat.txt üret */
 function prepare_playlist($slug, $cfg) {
     $dir = chan_data($slug);
     if (!is_dir($dir)) @mkdir($dir, 0777, true);
@@ -320,7 +370,7 @@ function q($a) {
     return '"' . str_replace('"', '\\"', $a) . '"';
 }
 
-/* ================================================================ FFmpeg KOMUT */
+/* ================================================================ FFMPEG KOMUT */
 function build_args($slug, $cfg, $S, &$err) {
     global $FONTS;
     $err = '';
@@ -344,12 +394,9 @@ function build_args($slug, $cfg, $S, &$err) {
     } else {
         $isHttp = preg_match('~^https?://~i', $in);
         $isFile = !$isHttp && !preg_match('~^(rtmp|rtsp|udp|srt|tcp|mms)://~i', $in);
-
-        // SADECE HTTP için reconnect — canlı kaynaklarda streamed yeter
         if ($isHttp) {
             array_push($a, '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
         }
-        // -re SADECE dosya inputta
         if ($cfg['input_realtime'] && $isFile) $a[] = '-re';
         if ($cfg['input_ua'] !== '') array_push($a, '-user_agent', $cfg['input_ua']);
         if ($cfg['input_extra'] !== '') {
@@ -357,23 +404,26 @@ function build_args($slug, $cfg, $S, &$err) {
                 if ($x !== '') $a[] = $x;
             }
         }
-        // analyzeduration sadece dosya için — canlı HTTP'de gecikme yapar
         if ($isFile) {
             array_push($a, '-analyzeduration', '5000000', '-probesize', '5000000');
         }
         array_push($a, '-i', $in);
     }
 
+    // Logo/bant/saat açıksa copy'den encode'a zorla
+    $useLogo  = $cfg['logo_enabled'] && $cfg['logo_file'] && is_file(chan_data($slug) . DS . $cfg['logo_file']);
+    $useBand  = $cfg['band_enabled'] && trim($cfg['band_text']) !== '';
+    $useClock = !empty($cfg['clock_enabled']);
+    if (($useLogo || $useBand || $useClock) && $cfg['mode'] === 'copy') {
+        $cfg['mode'] = 'encode';
+    }
+
     if ($cfg['mode'] === 'copy') {
         array_push($a, '-c', 'copy');
-        // copy modunda zaman damgası düzeltmesi HLS için gerekli
         if ($cfg['out_type'] === 'hls') {
             array_push($a, '-bsf:v', 'h264_mp4toannexb', '-copyts', '-start_at_zero');
         }
     } else {
-        // ENCODE
-        $useLogo = $cfg['logo_enabled'] && $cfg['logo_file'] && is_file(chan_data($slug) . DS . $cfg['logo_file']);
-        $useBand = $cfg['band_enabled'] && trim($cfg['band_text']) !== '';
         if ($useLogo) array_push($a, '-i', $cfg['logo_file']);
 
         $vf = [];
@@ -381,17 +431,70 @@ function build_args($slug, $cfg, $S, &$err) {
             list($w, $hh) = explode('x', $cfg['res']);
             $vf[] = "scale={$w}:{$hh}:force_original_aspect_ratio=decrease,setsar=1,pad={$w}:{$hh}:(ow-iw)/2:(oh-ih)/2";
         }
+
+        // === ALT BANT (metin) ===
         if ($useBand) {
             $bh = (int)$cfg['band_height'];
             $op = number_format($cfg['band_bg_opacity'] / 100, 2, '.', '');
             $bgc = '0x' . substr($cfg['band_bg_color'], 1);
-            $fc = '0x' . substr($cfg['band_font_color'], 1);
-            $by = $cfg['band_pos'] === 'top' ? '0' : "ih-$bh";
+            $fc  = '0x' . substr($cfg['band_font_color'], 1);
+            $by  = $cfg['band_pos'] === 'top' ? '0' : "ih-$bh";
             $vf[] = "drawbox=x=0:y=$by:w=iw:h=$bh:color=$bgc@$op:t=fill";
-            $ty = $cfg['band_pos'] === 'top' ? "($bh-text_h)/2" : "h-$bh+($bh-text_h)/2";
-            $tx = $cfg['band_style'] === 'scroll' ? "w-mod(t*{$cfg['band_speed']},w+text_w)" : "(w-text_w)/2";
+
+            // Dikey: bant içinde ortala
+            $ty = $cfg['band_pos'] === 'top' ? "(($bh-text_h)/2)" : "(h-$bh+($bh-text_h)/2)";
+
+            if ($cfg['band_style'] === 'scroll') {
+                $tx = "w-mod(t*{$cfg['band_speed']},w+text_w)";
+            } else {
+                // sabit — sol / orta / sağ
+                $align = $cfg['band_align'] ?? 'center';
+                if ($align === 'left')       $tx = "20";
+                elseif ($align === 'right')  $tx = "w-text_w-20";
+                else                          $tx = "(w-text_w)/2";
+            }
             $vf[] = "drawtext=fontfile=font.ttf:textfile=band.txt:reload=0:expansion=none:fontsize={$cfg['band_font_size']}:fontcolor=$fc:shadowcolor=black@0.5:shadowx=1:shadowy=1:x='$tx':y='$ty'";
         }
+
+        // === SAAT ===
+        if ($useClock) {
+            $fs2 = (int)$cfg['clock_font_size'];
+            $mgn = (int)$cfg['clock_margin'];
+            $op2 = number_format($cfg['clock_bg_opacity'] / 100, 2, '.', '');
+            $bgc2 = '0x' . substr($cfg['clock_bg_color'], 1);
+            $fc2  = '0x' . substr($cfg['clock_font_color'], 1);
+
+            $fmt = ($cfg['clock_format'] === '12') ? '%I\\:%M\\:%S %p' : '%H\\:%M\\:%S';
+            $cx = ($cfg['clock_align'] === 'left') ? (string)$mgn
+                : (($cfg['clock_align'] === 'right') ? "w-text_w-$mgn" : "(w-text_w)/2");
+            $cy = ($cfg['clock_pos'] === 'top') ? (string)$mgn : "h-text_h-$mgn";
+
+            if (!empty($cfg['clock_box'])) {
+                $boxPadX = 10; $boxPadY = 6;
+                $bx = ($cfg['clock_align'] === 'left') ? ($mgn - $boxPadX)
+                    : (($cfg['clock_align'] === 'right') ? "w-text_w-{$mgn}-{$boxPadX}" : "(w-text_w)/2-{$boxPadX}");
+                $byy = ($cfg['clock_pos'] === 'top') ? ($mgn - $boxPadY) : "h-text_h-{$mgn}-{$boxPadY}";
+                $vf[] = "drawbox=x=$bx:y=$byy:w=text_w+" . ($boxPadX*2) . ":h=text_h+" . ($boxPadY*2) . ":color=$bgc2@$op2:t=fill";
+            }
+            $vf[] = "drawtext=fontfile=font_clock.ttf:timecode='00\\:00\\:00\\:00':r=1:fontsize=$fs2:fontcolor=$fc2:x='$cx':y='$cy':box=0";
+            // timecode değil gerçek saat için text='%{localtime...}'
+            // ffmpeg drawtext text= kullanmak daha doğru:
+        }
+
+        // === SAAT (doğru ffmpeg ifadesi) ===
+        if ($useClock) {
+            // önceki eklenen timecode drawtext'i kaldır, gerçek saat ekle
+            $vf = array_values(array_filter($vf, function($x){ return strpos($x, "timecode=") === false; }));
+            $fs2 = (int)$cfg['clock_font_size'];
+            $mgn = (int)$cfg['clock_margin'];
+            $fc2 = '0x' . substr($cfg['clock_font_color'], 1);
+            $fmtTxt = ($cfg['clock_format'] === '12') ? '%{localtime\\\\:%I\\\\:%M\\\\:%S %p}' : '%{localtime\\\\:%H\\\\:%M\\\\:%S}';
+            $cx = ($cfg['clock_align'] === 'left') ? (string)$mgn
+                : (($cfg['clock_align'] === 'right') ? "w-text_w-$mgn" : "(w-text_w)/2");
+            $cy = ($cfg['clock_pos'] === 'top') ? (string)$mgn : "h-text_h-$mgn";
+            $vf[] = "drawtext=fontfile=font_clock.ttf:text='$fmtTxt':fontsize=$fs2:fontcolor=$fc2:shadowcolor=black@0.5:shadowx=1:shadowy=1:x='$cx':y='$cy'";
+        }
+
         if (!$vf) $vf[] = 'null';
         $graph = '[0:v:0]' . implode(',', $vf);
         if ($useLogo) {
@@ -406,8 +509,8 @@ function build_args($slug, $cfg, $S, &$err) {
         array_push($a, '-filter_complex', $graph, '-map', '[v]', '-map', '0:a:0?');
 
         $vb = (int)$cfg['vbitrate'];
-        $bufs = $vb * 2;             // 2x yeterli — 4x tampon dolmaz
-        $maxrate = (int)($vb * 1.2);  // b:v'nin %20 üstü — CBR zorlamaz, dalgalanma emer
+        $bufs = $vb * 2;
+        $maxrate = (int)($vb * 1.2);
 
         switch ($cfg['vcodec']) {
             case 'h264_nvenc':
@@ -447,7 +550,7 @@ function build_args($slug, $cfg, $S, &$err) {
     return $a;
 }
 
-/* ================================================================ RUNNER */
+/* ================================================================ RUNNER (v4 - anında stop) */
 function write_runner($slug, $cfg) {
     $dir = chan_data($slug);
     $auto = $cfg['autorestart'] ? '$true' : '$false';
@@ -465,6 +568,7 @@ $ff = [IO.File]::ReadAllText("$base\ffpath.txt").Trim()
 $n = 0
 while ($true) {
   $n++
+  if (Test-Path "$base\stop.flag") { Log "Stop flag (baslangicta)"; break }
   $a = [IO.File]::ReadAllText("$base\args.txt").Trim()
   Log "FFmpeg baslatiliyor (deneme #$n)"
   $code = -1
@@ -472,15 +576,34 @@ while ($true) {
     $p = Start-Process -FilePath $ff -ArgumentList $a -WorkingDirectory "$base" -WindowStyle Hidden -PassThru -RedirectStandardError "$base\ffmpeg.log"
     $null = $p.Handle
     Set-Content -Path "$base\ffmpeg.pid" -Value $p.Id -Encoding ASCII
-    $p.WaitForExit()
-    $code = $p.ExitCode
+
+    while (-not $p.HasExited) {
+      if (Test-Path "$base\stop.flag") {
+        Log "Stop flag algilandi - FFmpeg sonlandiriliyor"
+        try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+        try { & taskkill /F /T /PID $p.Id 2>$null | Out-Null } catch {}
+        Start-Sleep -Milliseconds 500
+        break
+      }
+      Start-Sleep -Milliseconds 500
+    }
+    if (-not $p.HasExited) {
+      try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+      Start-Sleep -Milliseconds 500
+    }
+    try { $code = $p.ExitCode } catch { $code = -1 }
   } catch { Log ("Hata: " + $_.Exception.Message) }
   Remove-Item "$base\ffmpeg.pid" -ErrorAction SilentlyContinue
-  if (Test-Path "$base\stop.flag") { Log "Yayin kullanici tarafindan durduruldu"; break }
+  if (Test-Path "$base\stop.flag") { Log "Yayin durduruldu"; break }
   try { Get-Content "$base\ffmpeg.log" -Tail 6 | ForEach-Object { Log ("  > " + $_) } } catch {}
   if (-not $auto) { Log "FFmpeg durdu (kod $code)."; break }
   Log "FFmpeg durdu (kod $code). $delay sn sonra yeniden baslatilacak."
-  Start-Sleep -Seconds $delay
+  $elapsed = 0
+  while ($elapsed -lt $delay) {
+    if (Test-Path "$base\stop.flag") { Log "Stop flag (bekleme)"; break }
+    Start-Sleep -Milliseconds 500
+    $elapsed += 0.5
+  }
   if (Test-Path "$base\stop.flag") { break }
 }
 Remove-Item "$base\runner.pid" -ErrorAction SilentlyContinue
@@ -552,10 +675,17 @@ function start_channel($slug) {
     global $FONTS;
     $win = getenv('WINDIR') ?: 'C:\\Windows';
     $src = $win . '\\Fonts\\' . $FONTS[$c['band_font']];
+    $srcClock = $win . '\\Fonts\\' . $FONTS[$c['clock_font']];
     $dir = chan_data($slug);
     if (!is_dir($dir)) @mkdir($dir, 0777, true);
     if (is_file($src)) @copy($src, $dir . DS . 'font.ttf');
-    elseif ($c['mode'] === 'encode' && $c['band_enabled']) return ['ok' => false, 'msg' => 'Yazı tipi yok: ' . $src];
+    if (is_file($srcClock)) @copy($srcClock, $dir . DS . 'font_clock.ttf');
+    if (!is_file($dir . DS . 'font_clock.ttf') && is_file($dir . DS . 'font.ttf')) {
+        @copy($dir . DS . 'font.ttf', $dir . DS . 'font_clock.ttf');
+    }
+    if (($c['mode'] === 'encode') && ($c['band_enabled'] || $c['clock_enabled']) && !is_file($dir . DS . 'font.ttf')) {
+        return ['ok' => false, 'msg' => 'Yazı tipi yok: ' . $src];
+    }
 
     @file_put_contents($dir . DS . 'band.txt', $c['band_text']);
 
@@ -577,21 +707,42 @@ function start_channel($slug) {
 
     $cmd = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' . $dir . DS . 'runner.ps1"';
     if (!launch($cmd)) return ['ok' => false, 'msg' => 'İşlem başlatılamadı.'];
-    for ($i = 0; $i < 10; $i++) { usleep(400000); if (read_pid($dir . DS . 'ffmpeg.pid')) break; }
+    for ($i = 0; $i < 12; $i++) { usleep(400000); if (read_pid($dir . DS . 'ffmpeg.pid')) break; }
     $st = channel_status($slug);
     $ok = $st && $st['state'] !== 'stopped';
     return ['ok' => $ok, 'msg' => $ok ? 'Başlatıldı.' : 'Başlamadı, logu kontrol edin.'];
 }
 
+/* v4: ANINDA durduran sürüm */
 function stop_channel($slug) {
     $dir = chan_data($slug);
     @file_put_contents($dir . DS . 'stop.flag', '1');
+
     $r = read_pid($dir . DS . 'runner.pid');
     $f = read_pid($dir . DS . 'ffmpeg.pid');
+
+    // 1) Doğrudan PID ile öldür
     if ($f) @exec('taskkill /F /T /PID ' . $f . ' 2>NUL');
     if ($r) @exec('taskkill /F /T /PID ' . $r . ' 2>NUL');
+
+    // 2) Klasör yoluna göre yetim ffmpeg.exe'leri bul ve öldür
+    $safeDir = str_replace('\\', '\\\\', $dir);
+    $psKill = 'Get-CimInstance Win32_Process -Filter "Name = \'ffmpeg.exe\'" | '
+            . 'Where-Object { $_.CommandLine -like \'*' . $safeDir . '*\' } | '
+            . 'ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }';
+    @exec('powershell -NoProfile -Command "' . str_replace('"', '\\"', $psKill) . '" 2>NUL');
+
     @unlink($dir . DS . 'runner.pid');
     @unlink($dir . DS . 'ffmpeg.pid');
+
+    // 3) Runner'ın stop.flag'i görüp çıkmasını bekle
+    usleep(1000000);
+
+    // 4) Hâlâ hayattaysa ikinci tur
+    if ($f && pid_alive($f)) @exec('taskkill /F /PID ' . $f . ' 2>NUL');
+    if ($r && pid_alive($r)) @exec('taskkill /F /PID ' . $r . ' 2>NUL');
+
+    @unlink($dir . DS . 'stop.flag');
     return ['ok' => true, 'msg' => 'Durduruldu.'];
 }
 
@@ -631,7 +782,7 @@ if (!$authed) {
 <form method="post" class="w-full max-w-sm bg-slate-900/80 backdrop-blur border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl">
     <div class="flex items-center gap-3 mb-6">
         <div class="w-11 h-11 rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-xl">📡</div>
-        <div><h1 class="text-xl font-bold">Yayın Paneli</h1><p class="text-xs text-slate-400">Çok kanallı FFmpeg</p></div>
+        <div><h1 class="text-xl font-bold">Yayın Paneli</h1><p class="text-xs text-slate-400">Çok kanallı FFmpeg v4</p></div>
     </div>
     <?php if (!empty($loginErr)): ?><div class="mb-4 text-sm bg-red-500/10 border border-red-500/40 text-red-300 rounded-lg px-3 py-2"><?= h($loginErr) ?></div><?php endif; ?>
     <label class="block text-xs text-slate-400 mb-1">Kullanıcı adı</label>
@@ -697,7 +848,7 @@ if (isset($_GET['api'])) {
                 jout(['ok' => false, 'msg' => 'Klasör adı sadece harf, rakam, _ ve - içerebilir.']);
             }
             $slugNew = slugify($raw);
-            if ($slugNew === '') jout(['ok' => false, 'msg' => 'Geçerli klasör adı girin (2-50 karakter).']);
+            if ($slugNew === '') jout(['ok' => false, 'msg' => 'Geçerli klasör adı girin.']);
             if ($name === '') $name = $slugNew;
             $reserved = ['data', 'hls', 'index', 'config', 'logo', 'band', 'sessions', 'web', 'htaccess'];
             if (in_array(strtolower($slugNew), $reserved, true)) jout(['ok' => false, 'msg' => 'Bu isim kullanılamaz.']);
@@ -706,9 +857,11 @@ if (isset($_GET['api'])) {
             $chans[$slugNew] = default_channel($name);
             if (isset($chans[''])) {
                 $base = $chans[''];
-                foreach (['vcodec','preset','vbitrate','abitrate','gop','res','fps','mode','logo_pos','band_style','band_pos',
+                foreach (['vcodec','preset','vbitrate','abitrate','gop','res','fps','mode','logo_pos','band_style','band_pos','band_align',
                           'band_font','band_font_size','band_font_color','band_bg_color','band_bg_opacity','band_height',
-                          'band_speed','logo_width','logo_opacity','logo_margin','hls_time','hls_list','autorestart','restart_delay'] as $k) {
+                          'band_speed','logo_width','logo_opacity','logo_margin','hls_time','hls_list','autorestart','restart_delay',
+                          'clock_pos','clock_align','clock_font','clock_font_size','clock_font_color','clock_bg_color','clock_bg_opacity',
+                          'clock_box','clock_margin','clock_format'] as $k) {
                     $chans[$slugNew][$k] = $base[$k];
                 }
             }
@@ -851,7 +1004,7 @@ $BASE = base_url();
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#020617">
-<title>Yayın Paneli</title>
+<title>Yayın Paneli v4</title>
 <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
 <style>
     *{-webkit-tap-highlight-color:transparent}
@@ -902,18 +1055,21 @@ $BASE = base_url();
     @media(min-width:640px){.toast{left:auto;right:1rem;transform:none;max-width:24rem}@keyframes slideUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}}
     .tabs-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
     .tabs-scroll::-webkit-scrollbar{display:none}
+    .seg{display:inline-flex;background:#020617;border:1px solid #334155;border-radius:.5rem;padding:.15rem;gap:.15rem}
+    .seg button{background:transparent;border:none;color:#94a3b8;padding:.4rem .7rem;border-radius:.35rem;cursor:pointer;font-size:.8rem;font-weight:600;transition:.15s;min-width:2.2rem}
+    .seg button.on{background:#4f46e5;color:#fff}
+    .seg button:not(.on):hover{color:#e2e8f0}
 </style>
 </head>
 <body class="text-slate-100">
 <div class="max-w-7xl mx-auto p-3 sm:p-6">
 
-    <!-- Header -->
     <header class="flex flex-wrap items-center justify-between gap-2 mb-4">
         <div class="flex items-center gap-2.5">
             <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center text-lg flex-none">📡</div>
             <div>
                 <h1 class="text-lg sm:text-xl font-bold leading-tight">Yayın Paneli</h1>
-                <p class="text-[11px] text-slate-400 hidden sm:block">Çok kanallı FFmpeg yönetimi</p>
+                <p class="text-[11px] text-slate-400 hidden sm:block">Çok kanallı FFmpeg · v4</p>
             </div>
         </div>
         <button id="menuBtn" class="btn bg-slate-800 hover:bg-slate-700 sm:hidden">☰</button>
@@ -940,7 +1096,7 @@ $BASE = base_url();
 
     <div id="chGrid" class="grid-ch"></div>
 
-    <p class="text-center text-xs text-slate-600 mt-6 mb-2">Yayın Paneli · PHP <?= h(PHP_VERSION) ?> · v3</p>
+    <p class="text-center text-xs text-slate-600 mt-6 mb-2">Yayın Paneli · PHP <?= h(PHP_VERSION) ?> · v4</p>
 </div>
 
 <!-- Kanal düzenleme -->
@@ -958,7 +1114,8 @@ $BASE = base_url();
             <div class="tab active" data-t="src">🔗 Kaynak</div>
             <div class="tab" data-t="enc">⚙ Kodlama</div>
             <div class="tab" data-t="logo">🖼 Logo</div>
-            <div class="tab" data-t="band">📰 Bant</div>
+            <div class="tab" data-t="band">📰 Alt Bant</div>
+            <div class="tab" data-t="clock">⏰ Saat</div>
             <div class="tab" data-t="log">📊 Log</div>
             <div class="tab" data-t="del">🗑 Sil</div>
         </nav>
@@ -966,6 +1123,7 @@ $BASE = base_url();
         <form id="cfg" onsubmit="return false">
             <input type="hidden" id="chSlug">
 
+            <!-- KAYNAK -->
             <div class="tabp active card" id="t-src">
                 <div class="grid sm:grid-cols-2 gap-3 mb-3">
                     <div>
@@ -976,7 +1134,7 @@ $BASE = base_url();
                         <label class="lbl">Kaynak modu</label>
                         <select name="source_mode" class="inp" id="srcMode">
                             <option value="single">Tek link (canlı)</option>
-                            <option value="playlist">Oynatma listesi</option>
+                            <option value="playlist">Oynatma listesi (toplu film)</option>
                         </select>
                     </div>
                 </div>
@@ -992,9 +1150,11 @@ $BASE = base_url();
                 </div>
 
                 <div id="srcPlaylist" style="display:none">
-                    <label class="lbl">Her satır: Başlık| URL</label>
-                    <textarea name="playlist" rows="6" class="inp font-mono text-xs" placeholder="Bölüm 1| https://ornek.com/b1.m3u8&#10;Bölüm 2| https://ornek.com/b2.m3u8"></textarea>
+                    <label class="lbl">Her satır: <b>Film Adı | URL</b> (toplu film)</label>
+                    <textarea name="playlist" rows="10" class="inp font-mono text-xs" placeholder="Arka Sokaklar 1| https://ornek.com/aska1.m3u8&#10;Arka Sokaklar 2| https://ornek.com/aska2.m3u8&#10;Kurtlar Vadisi| https://ornek.com/kv.mp4&#10;https://ornek.com/reklam.mp4"></textarea>
+                    <p class="hint">Film adı yazarsan ve alt bantta "sıradaki film adı" açıksa, oynatılan bölümün adı otomatik banda yazılır.</p>
                     <label class="flex items-center gap-3 text-sm mt-3"><span class="sw"><input type="checkbox" name="loop_playlist"><span></span></span> Bitince başa dön</label>
+                    <label class="flex items-center gap-3 text-sm mt-2"><span class="sw"><input type="checkbox" name="show_title_on_band"><span></span></span> Oynatılan bölümün adını alt banda yaz</label>
                 </div>
 
                 <hr class="border-slate-800 my-4">
@@ -1010,11 +1170,14 @@ $BASE = base_url();
                     </div>
                     <div>
                         <label class="lbl">Mod</label>
-                        <select name="mode" class="inp">
-                            <option value="copy">📋 Kopyala (CPU yok, en stabil)</option>
-                            <option value="encode">🎬 Yeniden kodla (logo+bant)</option>
+                        <select name="mode" class="inp" id="modeSel">
+                            <option value="encode">🎬 Yeniden kodla (logo/bant/saat)</option>
+                            <option value="copy">📋 Kopyala (CPU yok, overlay yok)</option>
                         </select>
                     </div>
+                </div>
+                <div id="modeWarn" class="hidden text-[11px] bg-amber-500/10 border border-amber-500/40 text-amber-200 rounded-lg px-2 py-1.5 mt-2">
+                    ⚠️ Logo, bant veya saat açıkken <b>Kopyala</b> modu overlay ekleyemez. Kaydettiğinizde otomatik <b>Yeniden kodla</b> moduna geçer.
                 </div>
                 <div id="outUrlWrap" style="display:none">
                     <label class="lbl mt-3">Çıkış linki</label>
@@ -1026,6 +1189,7 @@ $BASE = base_url();
                 </div>
             </div>
 
+            <!-- KODLAMA -->
             <div class="tabp card" id="t-enc">
                 <div class="grid sm:grid-cols-2 gap-3">
                     <div><label class="lbl">Çözünürlük</label>
@@ -1047,6 +1211,7 @@ $BASE = base_url();
                 </div>
             </div>
 
+            <!-- LOGO -->
             <div class="tabp card" id="t-logo">
                 <div class="flex items-center justify-between mb-3">
                     <h3 class="font-semibold text-sm">Logo</h3>
@@ -1071,6 +1236,7 @@ $BASE = base_url();
                 </div>
             </div>
 
+            <!-- ALT BANT -->
             <div class="tabp card" id="t-band">
                 <div class="flex items-center justify-between mb-3">
                     <h3 class="font-semibold text-sm">Alt Bant</h3>
@@ -1078,20 +1244,92 @@ $BASE = base_url();
                 </div>
                 <label class="lbl">Metin</label>
                 <textarea name="band_text" rows="2" class="inp"></textarea>
+
+                <div class="grid sm:grid-cols-2 gap-3 mt-3">
+                    <div>
+                        <label class="lbl">Stil</label>
+                        <select name="band_style" class="inp" id="bandStyle">
+                            <option value="scroll">Kayan yazı</option>
+                            <option value="static">Sabit yazı</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="lbl">Konum (üst / alt)</label>
+                        <select name="band_pos" class="inp">
+                            <option value="bottom">Alt</option>
+                            <option value="top">Üst</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="bandAlignWrap" class="mt-3" style="display:none">
+                    <label class="lbl">Yatay hizalama (sabit stil)</label>
+                    <div class="seg" data-name="band_align">
+                        <button type="button" data-val="left">◀ Sol</button>
+                        <button type="button" data-val="center">● Orta</button>
+                        <button type="button" data-val="right">Sağ ▶</button>
+                    </div>
+                </div>
+
                 <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-3">
-                    <div><label class="lbl">Stil</label><select name="band_style" class="inp"><option value="scroll">Kayan</option><option value="static">Sabit</option></select></div>
-                    <div><label class="lbl">Konum</label><select name="band_pos" class="inp"><option value="bottom">Alt</option><option value="top">Üst</option></select></div>
                     <div><label class="lbl">Yazı tipi</label>
                         <select name="band_font" class="inp"><option value="arial">Arial</option><option value="arialbd">Arial B</option><option value="tahoma">Tahoma</option><option value="verdana">Verdana</option><option value="segoeui">Segoe UI</option><option value="calibri">Calibri</option><option value="impact">Impact</option></select></div>
                     <div><label class="lbl">Yükseklik</label><input type="number" name="band_height" class="inp"></div>
                     <div><label class="lbl">Boyut</label><input type="number" name="band_font_size" class="inp"></div>
-                    <div><label class="lbl">Hız</label><input type="number" name="band_speed" class="inp"></div>
-                    <div><label class="lbl">Yazı</label><input type="color" name="band_font_color" class="inp"></div>
-                    <div><label class="lbl">Bant</label><input type="color" name="band_bg_color" class="inp"></div>
-                    <div><label class="lbl">Opak (%)</label><input type="range" min="0" max="100" name="band_bg_opacity" class="w-full accent-indigo-500 mt-2"></div>
+                    <div><label class="lbl">Kayan hız</label><input type="number" name="band_speed" class="inp"></div>
+                    <div><label class="lbl">Yazı rengi</label><input type="color" name="band_font_color" class="inp"></div>
+                    <div><label class="lbl">Bant rengi</label><input type="color" name="band_bg_color" class="inp"></div>
+                    <div class="col-span-2 sm:col-span-1"><label class="lbl">Opak (%)</label><input type="range" min="0" max="100" name="band_bg_opacity" class="w-full accent-indigo-500 mt-2"></div>
                 </div>
             </div>
 
+            <!-- SAAT -->
+            <div class="tabp card" id="t-clock">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-semibold text-sm">Saat Göstergesi</h3>
+                    <label class="flex items-center gap-2 text-sm"><span class="sw"><input type="checkbox" name="clock_enabled"><span></span></span></label>
+                </div>
+
+                <div class="grid sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="lbl">Konum (üst / alt)</label>
+                        <select name="clock_pos" class="inp">
+                            <option value="top">Üst</option>
+                            <option value="bottom">Alt</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="lbl">Format</label>
+                        <select name="clock_format" class="inp">
+                            <option value="24">24 saat (14:23:05)</option>
+                            <option value="12">12 saat (02:23:05 PM)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="mt-3">
+                    <label class="lbl">Yatay hizalama</label>
+                    <div class="seg" data-name="clock_align">
+                        <button type="button" data-val="left">◀ Sol</button>
+                        <button type="button" data-val="center">● Orta</button>
+                        <button type="button" data-val="right">Sağ ▶</button>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-3">
+                    <div><label class="lbl">Yazı tipi</label>
+                        <select name="clock_font" class="inp"><option value="arial">Arial</option><option value="arialbd">Arial B</option><option value="tahoma">Tahoma</option><option value="verdana">Verdana</option><option value="segoeui">Segoe UI</option><option value="calibri">Calibri</option><option value="impact">Impact</option></select></div>
+                    <div><label class="lbl">Boyut</label><input type="number" name="clock_font_size" class="inp"></div>
+                    <div><label class="lbl">Kenar boşluğu</label><input type="number" name="clock_margin" class="inp"></div>
+                    <div><label class="lbl">Yazı rengi</label><input type="color" name="clock_font_color" class="inp"></div>
+                    <div><label class="lbl">Kutu rengi</label><input type="color" name="clock_bg_color" class="inp"></div>
+                    <div><label class="lbl">Kutu opak (%)</label><input type="range" min="0" max="100" name="clock_bg_opacity" class="w-full accent-indigo-500 mt-2"></div>
+                </div>
+
+                <label class="flex items-center gap-3 text-sm mt-3"><span class="sw"><input type="checkbox" name="clock_box"><span></span></span> Arka plan kutusu çiz</label>
+            </div>
+
+            <!-- LOG -->
             <div class="tabp card" id="t-log">
                 <h3 class="font-semibold text-sm mb-2">FFmpeg</h3>
                 <div id="mLog" class="term">—</div>
@@ -1183,7 +1421,6 @@ const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 let CH = null, chSlug = '', pollTimer = null;
 
-/* Menü toggle (mobil) */
 $('#menuBtn').onclick = () => $('#menu').classList.toggle('hidden');
 
 function toast(msg, ok = true) {
@@ -1218,9 +1455,6 @@ async function renderGrid() {
     const r = await apiGet('status_all');
     if (!r.ok) return;
     const g = $('#chGrid');
-    // Sadece değişenleri yeniden çiz (titremesin)
-    const existing = {};
-    [...g.children].forEach(el => { if (el.dataset.slug !== undefined) existing[el.dataset.slug] = el; });
     g.innerHTML = '';
     for (const ch of r.channels) {
         const el = document.createElement('div');
@@ -1270,6 +1504,42 @@ document.addEventListener('click', async e => {
     }
 });
 
+/* ---- Segmented (konum) ---- */
+function bindSegs() {
+    $$('.seg').forEach(seg => {
+        const name = seg.dataset.name;
+        seg.querySelectorAll('button').forEach(b => {
+            b.onclick = () => {
+                seg.querySelectorAll('button').forEach(x => x.classList.remove('on'));
+                b.classList.add('on');
+                const inp = seg.parentElement.querySelector('input[type=hidden][name="' + name + '"]')
+                         || document.querySelector('#cfg input[name="' + name + '"]');
+                // gizli input yoksa oluştur
+                let hidden = document.querySelector('#cfg input[type=hidden][name="' + name + '"]');
+                if (!hidden) {
+                    hidden = document.createElement('input');
+                    hidden.type = 'hidden'; hidden.name = name;
+                    $('#cfg').appendChild(hidden);
+                }
+                hidden.value = b.dataset.val;
+                if (name === 'band_align' || name === 'clock_align') updateModeWarn();
+            };
+        });
+    });
+}
+function setSeg(name, val) {
+    const seg = document.querySelector('.seg[data-name="' + name + '"]');
+    if (!seg) return;
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.val === val));
+    let hidden = document.querySelector('#cfg input[type=hidden][name="' + name + '"]');
+    if (!hidden) {
+        hidden = document.createElement('input');
+        hidden.type = 'hidden'; hidden.name = name;
+        $('#cfg').appendChild(hidden);
+    }
+    hidden.value = val;
+}
+
 /* ---- Modal ---- */
 function openModal() { $('#modal').classList.add('open'); document.body.style.overflow = 'hidden'; }
 function closeModal() { $('#modal').classList.remove('open'); document.body.style.overflow = ''; if (pollTimer) clearInterval(pollTimer); }
@@ -1285,7 +1555,9 @@ async function openChannel(slug) {
     $('#mTitle').textContent = CH.name || slug;
     $('#mSub').textContent = (slug ? '/' + slug : '/(ana)') + '/hls/stream.m3u8';
     fillForm();
-    updateSrcMode(); updateOutType();
+    updateSrcMode(); updateOutType(); updateBandAlign(); updateModeWarn();
+    setSeg('band_align', CH.band_align || 'center');
+    setSeg('clock_align', CH.clock_align || 'right');
     logoUi();
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(pollChannel, 3000);
@@ -1294,6 +1566,7 @@ async function openChannel(slug) {
 }
 function fillForm() {
     $$('#cfg [name]').forEach(el => {
+        if (el.type === 'hidden') return;
         const v = CH[el.name];
         if (v === undefined) return;
         if (el.type === 'checkbox') el.checked = !!+v; else el.value = v;
@@ -1322,8 +1595,24 @@ function updateOutType() {
     $('#outUrlWrap').style.display = t === 'hls' ? 'none' : '';
     $('#hlsOpts').style.display = t === 'hls' ? '' : 'none';
 }
+function updateBandAlign() {
+    const s = $('#bandStyle').value;
+    $('#bandAlignWrap').style.display = s === 'static' ? '' : 'none';
+}
+function updateModeWarn() {
+    const logoOn = $$('#cfg input[name=logo_enabled]')[0]?.checked;
+    const bandOn = $$('#cfg input[name=band_enabled]')[0]?.checked;
+    const clockOn = $$('#cfg input[name=clock_enabled]')[0]?.checked;
+    const modeCopy = $('#modeSel')?.value === 'copy';
+    $('#modeWarn').classList.toggle('hidden', !((logoOn || bandOn || clockOn) && modeCopy));
+}
 $('#srcMode').onchange = updateSrcMode;
 $('#outType').onchange = updateOutType;
+$('#bandStyle').onchange = updateBandAlign;
+$('#modeSel').onchange = updateModeWarn;
+document.addEventListener('change', e => {
+    if (e.target.closest('#cfg') && ['logo_enabled','band_enabled','clock_enabled','mode'].includes(e.target.name)) updateModeWarn();
+});
 
 function logoUi() {
     const has = !!CH.logo_file;
@@ -1423,7 +1712,6 @@ $('#bDelete').onclick = async () => {
     if (r.ok) { closeModal(); renderGrid(); }
 };
 
-/* Yeni kanal */
 $('#bNew').onclick = () => { $('#newModal').classList.add('open'); document.body.style.overflow = 'hidden'; $('#nSlug').focus(); };
 $('#nClose').onclick = () => { $('#newModal').classList.remove('open'); document.body.style.overflow = ''; };
 $('#nSlug').addEventListener('input', e => { $('#nPreview').textContent = e.target.value || 'diginet'; });
@@ -1442,7 +1730,6 @@ $('#nCreate').onclick = async () => {
     }
 };
 
-/* Ayarlar */
 $('#bSettings').onclick = () => { $('#sFF').value = SETTINGS.ffmpeg_path; $('#setModal').classList.add('open'); document.body.style.overflow = 'hidden'; };
 $('#sClose').onclick = () => { $('#setModal').classList.remove('open'); document.body.style.overflow = ''; };
 $('#sSave').onclick = async () => {
@@ -1480,6 +1767,7 @@ $('#bStopAll').onclick = async () => {
     setTimeout(renderGrid, 800);
 };
 
+bindSegs();
 renderGrid();
 setInterval(() => { if (!$('#modal').classList.contains('open') && !$('#newModal').classList.contains('open') && !$('#setModal').classList.contains('open')) renderGrid(); }, 5000);
 </script>
