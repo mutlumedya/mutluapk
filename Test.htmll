@@ -1,0 +1,2453 @@
+Merhaba öncelikle benimle hep Türkçe konuş  şimdi sana kod vereceğim bu kodun yapisi ile aynı olacak kotlin KT sekidle ayarla açılış animasyonlu sonra Firebase sistemli ama Firebase şifreleme yap kimse bilmesin içeriği ona göre Luks yap player konusuna sana bırakıyorum lüks bir player olsun %100 kumanda destekli olacak onutma geri tuşa basınca 2 kez uyarı versin öyle çıkış olsun    
+
+
+<!DOCTYPE html>
+<html lang="tr" data-theme="night">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="theme-color" content="#06070d" />
+  <title>Sar Medya · Canlı TV</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #06070d;
+      --bg-2: #0b0d18;
+      --surface: rgba(13, 15, 27, 0.82);
+      --surface-2: rgba(22, 25, 42, 0.7);
+      --card: rgba(17, 19, 34, 0.72);
+      --text: #f6f1e6;
+      --text-dim: #a7a2b4;
+      --text-muted: #5f5c73;
+
+      --gold: #e6c068;
+      --gold-2: #f8e5a6;
+      --gold-deep: #a97c2c;
+      --ice: #7fe3ff;
+      --rose: #ff5d8f;
+      --mint: #6dffb4;
+      --violet: #9f8bff;
+
+      --glow-gold: rgba(230, 192, 104, 0.42);
+      --glow-ice: rgba(127, 227, 255, 0.35);
+      --glow-rose: rgba(255, 93, 143, 0.45);
+      --glow-mint: rgba(109, 255, 180, 0.4);
+
+      --sidebar-w: 316px;
+      --radius: 24px;
+      --border: rgba(255, 255, 255, 0.075);
+      --border-gold: rgba(230, 192, 104, 0.38);
+      --item-bg: rgba(255, 255, 255, 0.04);
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+      --shadow-lux: 0 0 0 1px rgba(230,192,104,0.06), 0 30px 80px rgba(0, 0, 0, 0.7);
+      --gold-grad: linear-gradient(135deg, #fbeab0 0%, #e6c068 45%, #a97c2c 100%);
+      --on-gold: #1a1204;
+    }
+
+    html[data-theme="day"] {
+      color-scheme: light;
+      --bg: #f3efe6;
+      --bg-2: #ebe5d6;
+      --surface: rgba(255, 253, 247, 0.92);
+      --surface-2: rgba(255, 253, 247, 0.85);
+      --card: rgba(255, 255, 255, 0.9);
+      --text: #17130a;
+      --text-dim: #5b5340;
+      --text-muted: #9a917a;
+      --gold: #9a6d12;
+      --gold-2: #7a5408;
+      --gold-deep: #6b4806;
+      --ice: #0a6e8a;
+      --rose: #c4144f;
+      --mint: #0a8a55;
+      --violet: #5b3fd1;
+      --glow-gold: rgba(154, 109, 18, 0.28);
+      --glow-ice: rgba(10, 110, 138, 0.22);
+      --glow-rose: rgba(196, 20, 79, 0.25);
+      --glow-mint: rgba(10, 138, 85, 0.25);
+      --border: rgba(40, 30, 5, 0.12);
+      --border-gold: rgba(154, 109, 18, 0.4);
+      --item-bg: rgba(40, 30, 5, 0.045);
+      --shadow: 0 24px 60px rgba(60, 40, 0, 0.14);
+      --shadow-lux: 0 0 0 1px rgba(154,109,18,0.08), 0 24px 60px rgba(60, 40, 0, 0.16);
+      --gold-grad: linear-gradient(135deg, #e9c46a 0%, #b88416 55%, #7a5408 100%);
+      --on-gold: #fff8e6;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+
+    body {
+      font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+      overflow-x: hidden;
+      position: relative;
+      transition: background 0.5s ease, color 0.5s ease;
+    }
+
+    /* Aurora arka plan */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background:
+        radial-gradient(60% 50% at 12% 8%, var(--glow-gold) 0%, transparent 70%),
+        radial-gradient(50% 45% at 92% 12%, var(--glow-ice) 0%, transparent 70%),
+        radial-gradient(60% 50% at 50% 105%, var(--glow-rose) 0%, transparent 70%);
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.55;
+    }
+    /* İnce doku */
+    body::after {
+      content: '';
+      position: fixed; inset: 0;
+      background-image: radial-gradient(rgba(255,255,255,0.035) 1px, transparent 1px);
+      background-size: 3px 3px;
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.6;
+    }
+    html[data-theme="day"] body::after { opacity: 0.25; }
+
+    a { color: inherit; text-decoration: none; }
+    button { font-family: inherit; }
+
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--gold-grad); border-radius: 10px; }
+
+    :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+    /* ============ SPLASH ============ */
+    #splash {
+      position: fixed; inset: 0;
+      background:
+        radial-gradient(50% 45% at 50% 42%, rgba(230,192,104,0.16), transparent 70%),
+        #04050a;
+      z-index: 999999;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 34px;
+      transition: opacity 0.9s ease, visibility 0.9s;
+    }
+    #splash.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+
+    .splash-logo-wrap {
+      position: relative;
+      width: 220px; height: 220px;
+      display: grid; place-items: center;
+    }
+    .splash-ring {
+      position: absolute; inset: 0;
+      border-radius: 50%;
+      border: 1.5px solid transparent;
+      border-top-color: #e6c068;
+      border-right-color: rgba(230,192,104,0.25);
+      animation: splashSpin 3s linear infinite;
+      filter: drop-shadow(0 0 14px rgba(230,192,104,0.6));
+    }
+    .splash-ring:nth-child(2) {
+      inset: 14px;
+      border-top-color: #7fe3ff;
+      border-right-color: rgba(127,227,255,0.2);
+      animation-duration: 2.2s; animation-direction: reverse;
+      filter: drop-shadow(0 0 12px rgba(127,227,255,0.5));
+    }
+    .splash-ring:nth-child(3) {
+      inset: 28px;
+      border-top-color: #f8e5a6;
+      border-right-color: rgba(248,229,166,0.2);
+      animation-duration: 3.8s;
+      filter: drop-shadow(0 0 12px rgba(248,229,166,0.5));
+    }
+    @keyframes splashSpin { to { transform: rotate(360deg); } }
+
+    .splash-logo {
+      width: 138px; height: 138px;
+      border-radius: 50%;
+      object-fit: cover;
+      z-index: 2;
+      animation: splashPulse 2.6s ease-in-out infinite;
+      filter: drop-shadow(0 0 36px rgba(230,192,104,0.5));
+    }
+    .splash-mono {
+      display: none;
+      width: 138px; height: 138px;
+      border-radius: 50%;
+      place-items: center;
+      font-family: 'Syne', sans-serif;
+      font-weight: 800; font-size: 56px;
+      color: #1a1204;
+      background: linear-gradient(135deg, #fbeab0, #e6c068, #a97c2c);
+      z-index: 2;
+    }
+    @keyframes splashPulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.06); }
+    }
+
+    .splash-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 34px; font-weight: 800;
+      letter-spacing: 14px;
+      padding-left: 14px;
+      background: linear-gradient(100deg, #a97c2c 0%, #fbeab0 30%, #e6c068 50%, #fbeab0 70%, #a97c2c 100%);
+      background-size: 250% auto;
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+      animation: shimmer 3s linear infinite;
+    }
+    @keyframes shimmer {
+      0% { background-position: 0% center; }
+      100% { background-position: 250% center; }
+    }
+    .splash-bar {
+      width: 220px; height: 2px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 3px; overflow: hidden;
+    }
+    .splash-bar::after {
+      content: ''; display: block;
+      height: 100%; width: 40%;
+      background: linear-gradient(90deg, transparent, #e6c068, transparent);
+      animation: splashLoad 1.6s ease-in-out infinite;
+    }
+    @keyframes splashLoad {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
+
+    /* ============ TOPBAR ============ */
+    .topbar {
+      position: fixed;
+      top: calc(16px + env(safe-area-inset-top, 0px)); left: 50%;
+      transform: translateX(-50%);
+      width: calc(100% - 32px);
+      max-width: 1520px;
+      height: 74px;
+      border-radius: 26px;
+      padding: 0 16px 0 18px;
+      display: flex; align-items: center; gap: 14px;
+      background: var(--surface);
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-lux), inset 0 1px 0 rgba(255,255,255,0.09);
+      z-index: 100;
+    }
+    .topbar::after {
+      content: '';
+      position: absolute; left: 8%; right: 8%; bottom: -1px; height: 1px;
+      background: linear-gradient(90deg, transparent, var(--gold), transparent);
+      opacity: 0.55;
+    }
+
+    #menuBtn, .icon-btn {
+      width: 48px; height: 48px;
+      border-radius: 16px;
+      background: var(--item-bg);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      display: grid; place-items: center;
+      color: var(--text);
+      transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), border-color 0.3s, box-shadow 0.3s;
+      outline: none; flex-shrink: 0;
+      position: relative;
+    }
+    #menuBtn:hover, #menuBtn:focus, .icon-btn:hover, .icon-btn:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(230,192,104,0.12), 0 10px 28px var(--glow-gold);
+      transform: translateY(-2px);
+    }
+    #menuBtn.active { border-color: var(--gold); box-shadow: 0 0 24px var(--glow-gold); }
+
+    .menu-lines { width: 22px; height: 16px; position: relative; }
+    .menu-lines span {
+      position: absolute; left: 0;
+      height: 2px; border-radius: 2px;
+      background: var(--text);
+      transition: 0.45s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    }
+    .menu-lines span:nth-child(1) { top: 0; width: 100%; }
+    .menu-lines span:nth-child(2) { top: 7px; width: 70%; }
+    .menu-lines span:nth-child(3) { bottom: 0; width: 46%; }
+    #menuBtn.active .menu-lines span:nth-child(1) { top: 7px; transform: rotate(45deg); background: var(--gold); }
+    #menuBtn.active .menu-lines span:nth-child(2) { opacity: 0; transform: translateX(-12px); }
+    #menuBtn.active .menu-lines span:nth-child(3) { bottom: 7px; width: 100%; transform: rotate(-45deg); background: var(--gold); }
+
+    .brand { display: flex; align-items: center; gap: 13px; flex-shrink: 0; }
+    .brand-logo {
+      width: 48px; height: 48px;
+      border-radius: 50%;
+      overflow: hidden;
+      position: relative; flex-shrink: 0;
+      border: 1.5px solid var(--gold);
+      box-shadow: 0 0 22px var(--glow-gold);
+      transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+      background: #0a0a12;
+      display: grid; place-items: center;
+    }
+    .brand-logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .brand-logo .mono { font-family: 'Syne', sans-serif; font-weight: 800; color: var(--gold); display: none; }
+    .brand:hover .brand-logo { transform: rotate(-12deg) scale(1.08); }
+
+    .brand-name {
+      font-family: 'Syne', sans-serif;
+      font-size: 21px; font-weight: 800;
+      letter-spacing: 4px;
+      background: linear-gradient(100deg, var(--gold-deep) 0%, var(--gold-2) 35%, var(--gold) 55%, var(--gold-2) 75%, var(--gold-deep) 100%);
+      background-size: 250% auto;
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+      animation: shimmer 6s linear infinite;
+      white-space: nowrap;
+    }
+
+    .search-wrap {
+      flex: 0 1 270px;
+      max-width: 540px;
+      margin-left: auto;
+      position: relative;
+      display: flex; align-items: center;
+      transition: flex 0.45s cubic-bezier(0.25, 1, 0.5, 1);
+    }
+    .search-wrap:focus-within { flex: 0 1 540px; }
+    .search-wrap input {
+      width: 100%; height: 48px;
+      border-radius: 16px;
+      background: var(--item-bg);
+      border: 1px solid var(--border);
+      padding: 0 20px 0 48px;
+      color: var(--text);
+      font-size: 15px; font-family: inherit;
+      outline: none;
+      transition: border-color 0.3s, box-shadow 0.3s, background 0.3s;
+    }
+    .search-wrap input::placeholder { color: var(--text-muted); }
+    .search-wrap input:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(230,192,104,0.12), 0 0 28px var(--glow-gold);
+      background: rgba(230,192,104,0.05);
+    }
+    .search-wrap .search-ic {
+      position: absolute; left: 16px;
+      color: var(--text-dim); pointer-events: none;
+      transition: color 0.3s;
+    }
+    .search-wrap:focus-within .search-ic { color: var(--gold); }
+
+    .top-actions { display: flex; gap: 10px; flex-shrink: 0; }
+    .icon-btn.profile-btn, .icon-btn.ai-btn { border-color: rgba(230,192,104,0.28); }
+
+    @media (max-width: 820px) {
+      .topbar { padding: 0 12px; gap: 8px; height: 64px; border-radius: 22px; }
+      .brand-name { display: none; }
+      .brand-logo { width: 40px; height: 40px; }
+      .search-wrap { flex: 1 1 auto; margin-left: 0; }
+      .search-wrap:focus-within { flex: 1 1 auto; }
+      .search-wrap input { height: 42px; font-size: 13px; padding-left: 42px; }
+      .search-wrap .search-ic { left: 14px; }
+      #menuBtn, .icon-btn { width: 42px; height: 42px; border-radius: 14px; }
+      .icon-btn svg { width: 18px; height: 18px; }
+    }
+    @media (max-width: 420px) {
+      .top-actions { gap: 6px; }
+      #menuBtn, .icon-btn { width: 38px; height: 38px; }
+    }
+
+    /* ============ PROFİL PANELİ ============ */
+    .profile-panel {
+      position: fixed;
+      top: calc(106px + env(safe-area-inset-top, 0px)); right: 16px;
+      width: 344px;
+      max-width: calc(100% - 32px);
+      background: var(--surface);
+      backdrop-filter: blur(34px) saturate(180%);
+      -webkit-backdrop-filter: blur(34px) saturate(180%);
+      border: 1px solid var(--border);
+      border-radius: 28px;
+      padding: 22px;
+      box-shadow: var(--shadow-lux);
+      z-index: 95;
+      transform: translateY(-16px) scale(0.96);
+      opacity: 0; pointer-events: none;
+      transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+      max-height: calc(100vh - 130px);
+      overflow-y: auto;
+    }
+    .profile-panel.show { transform: none; opacity: 1; pointer-events: all; }
+
+    .profile-head {
+      display: flex; align-items: center; gap: 14px;
+      padding-bottom: 16px; margin-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .profile-avatar {
+      width: 58px; height: 58px;
+      border-radius: 20px;
+      background: var(--gold-grad);
+      display: grid; place-items: center;
+      font-size: 26px; color: var(--on-gold);
+      box-shadow: 0 0 28px var(--glow-gold);
+      flex-shrink: 0;
+    }
+    .profile-info h4 {
+      font-family: 'Syne', sans-serif;
+      font-size: 17px; font-weight: 800;
+      color: var(--text);
+    }
+    .profile-info p {
+      font-size: 12px; margin-top: 4px;
+      color: var(--gold); font-weight: 700;
+    }
+    .profile-section-title {
+      font-size: 12px; font-weight: 700;
+      color: var(--text-muted);
+      margin: 18px 4px 10px;
+    }
+    .profile-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: var(--item-bg);
+      border: 1px solid var(--border);
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+      outline: none;
+      color: var(--text);
+      font-size: 13.5px; font-weight: 700;
+      width: 100%; text-align: left;
+    }
+    .profile-item:hover, .profile-item:focus {
+      border-color: var(--gold);
+      background: rgba(230,192,104,0.07);
+      transform: translateX(4px);
+      box-shadow: 0 0 20px var(--glow-gold);
+    }
+    .profile-item .pi-icon {
+      width: 36px; height: 36px;
+      border-radius: 12px;
+      background: rgba(230,192,104,0.12);
+      display: grid; place-items: center;
+      flex-shrink: 0; font-size: 16px;
+    }
+    .profile-item .pi-text { flex: 1; }
+    .profile-item .pi-text small {
+      display: block; font-size: 11px;
+      color: var(--text-dim); font-weight: 500; margin-top: 2px;
+    }
+
+    .theme-toggle-btn {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px;
+      border-radius: 16px;
+      background: var(--item-bg);
+      border: 1px solid var(--border);
+      margin: 12px 0 8px;
+      cursor: pointer;
+      color: var(--text);
+      font-size: 13.5px; font-weight: 700;
+      width: 100%;
+      outline: none;
+      transition: all 0.3s;
+    }
+    .theme-toggle-btn:hover, .theme-toggle-btn:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 20px var(--glow-gold);
+    }
+    .theme-toggle-btn .switch {
+      width: 50px; height: 28px;
+      border-radius: 14px;
+      background: var(--item-bg);
+      border: 1px solid var(--border);
+      position: relative; flex-shrink: 0;
+    }
+    .theme-toggle-btn .switch::after {
+      content: '';
+      position: absolute; top: 3px; left: 3px;
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background: var(--gold-grad);
+      transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    html[data-theme="day"] .theme-toggle-btn .switch::after { transform: translateX(22px); }
+
+    /* ============ MODALLER ============ */
+    .m3u-modal-backdrop, .pass-modal-backdrop {
+      position: fixed; inset: 0;
+      background: rgba(2, 3, 8, 0.82);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      z-index: 99998;
+      display: none;
+      align-items: center; justify-content: center;
+      padding: 20px;
+    }
+    .m3u-modal-backdrop.show, .pass-modal-backdrop.show { display: flex; }
+
+    .m3u-modal, .pass-modal {
+      background: var(--surface);
+      border: 1px solid var(--border-gold);
+      border-radius: 30px;
+      padding: 32px;
+      width: 100%;
+      box-shadow: 0 40px 100px rgba(0,0,0,0.8), 0 0 60px var(--glow-gold);
+      animation: modalIn 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+      position: relative; overflow: hidden;
+    }
+    .m3u-modal { max-width: 500px; }
+    .pass-modal { max-width: 420px; padding: 36px; border-color: rgba(255,93,143,0.45); box-shadow: 0 40px 100px rgba(0,0,0,0.85), 0 0 60px var(--glow-rose); }
+    .m3u-modal::before, .pass-modal::before {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: linear-gradient(90deg, var(--gold-deep), var(--gold-2), var(--gold), var(--gold-deep));
+      background-size: 250% auto;
+      animation: shimmer 4s linear infinite;
+    }
+    .pass-modal::before { background: linear-gradient(90deg, var(--rose), var(--gold), var(--rose)); background-size: 250% auto; }
+    @keyframes modalIn {
+      from { opacity: 0; transform: scale(0.92) translateY(26px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    .m3u-modal-title, .pass-modal-title {
+      font-family: 'Syne', sans-serif;
+      font-size: 22px; font-weight: 800;
+      margin-bottom: 8px;
+      color: var(--gold-2);
+      display: flex; align-items: center; gap: 10px;
+    }
+    html[data-theme="day"] .m3u-modal-title { color: var(--gold-deep); }
+    .pass-modal-title { justify-content: center; color: var(--rose); font-size: 24px; }
+    .m3u-modal-sub, .pass-modal-sub {
+      color: var(--text-dim);
+      font-size: 13px; line-height: 1.6;
+      margin-bottom: 22px;
+    }
+    .pass-modal-sub { text-align: center; }
+
+    .m3u-input {
+      width: 100%; height: 52px;
+      padding: 0 18px;
+      border-radius: 16px;
+      background: rgba(0,0,0,0.32);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 14px; font-family: inherit;
+      outline: none; transition: all 0.3s;
+      margin-bottom: 14px;
+    }
+    html[data-theme="day"] .m3u-input, html[data-theme="day"] .pass-input { background: rgba(0,0,0,0.04); }
+    .m3u-input:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 24px var(--glow-gold);
+    }
+    .m3u-actions, .pass-actions { display: flex; gap: 10px; margin-top: 6px; }
+    .m3u-btn, .pass-btn {
+      flex: 1; padding: 14px;
+      border-radius: 15px;
+      border: none;
+      font-weight: 800; font-size: 14px;
+      cursor: pointer; outline: none;
+      transition: all 0.3s;
+    }
+    .m3u-btn-primary {
+      background: var(--gold-grad);
+      color: var(--on-gold);
+      box-shadow: 0 6px 24px var(--glow-gold);
+    }
+    .pass-btn-primary {
+      background: linear-gradient(135deg, var(--rose), #c2185b);
+      color: #fff;
+      box-shadow: 0 6px 26px var(--glow-rose);
+    }
+    .m3u-btn-primary:hover, .m3u-btn-primary:focus, .pass-btn-primary:hover, .pass-btn-primary:focus { transform: translateY(-3px); }
+    .m3u-btn-ghost, .pass-btn-ghost {
+      background: var(--item-bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .m3u-btn-ghost:hover, .m3u-btn-ghost:focus, .pass-btn-ghost:hover, .pass-btn-ghost:focus { border-color: var(--text-dim); }
+
+    .m3u-list { max-height: 300px; overflow-y: auto; margin-top: 18px; padding-right: 6px; }
+    .m3u-empty { text-align: center; color: var(--text-dim); font-size: 13px; padding: 20px 0; }
+    .m3u-entry {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: var(--item-bg);
+      border: 1px solid var(--border);
+      margin-bottom: 8px;
+      transition: all 0.3s;
+    }
+    .m3u-entry:hover { border-color: var(--gold); box-shadow: 0 0 16px var(--glow-gold); }
+    .m3u-entry-icon {
+      width: 38px; height: 38px;
+      border-radius: 12px;
+      background: var(--gold-grad);
+      display: grid; place-items: center;
+      font-size: 16px; flex-shrink: 0;
+    }
+    .m3u-entry-info { flex: 1; min-width: 0; }
+    .m3u-entry-url {
+      font-size: 13px; font-weight: 700;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .m3u-entry-meta { font-size: 11px; color: var(--text-dim); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .m3u-entry-btn {
+      width: 34px; height: 34px;
+      border-radius: 11px;
+      background: var(--item-bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      display: grid; place-items: center;
+      cursor: pointer; outline: none;
+      transition: all 0.3s; flex-shrink: 0; font-size: 15px;
+    }
+    .m3u-entry-btn:hover, .m3u-entry-btn:focus { border-color: var(--gold); box-shadow: 0 0 16px var(--glow-gold); }
+    .m3u-entry-btn.del { background: rgba(255,93,143,0.1); border-color: rgba(255,93,143,0.3); }
+    .m3u-entry-btn.del:hover, .m3u-entry-btn.del:focus { border-color: var(--rose); box-shadow: 0 0 18px var(--glow-rose); }
+
+    .pass-input {
+      width: 100%; height: 58px;
+      padding: 0 20px;
+      border-radius: 18px;
+      background: rgba(0,0,0,0.32);
+      border: 1px solid rgba(255,93,143,0.35);
+      color: var(--text);
+      font-size: 22px; font-weight: 800;
+      letter-spacing: 8px; text-align: center;
+      font-family: inherit; outline: none;
+      transition: all 0.35s; margin-bottom: 18px;
+    }
+    .pass-input:focus { border-color: var(--rose); box-shadow: 0 0 30px var(--glow-rose); }
+    .pass-error { color: var(--rose); font-size: 13px; text-align: center; margin-top: 14px; display: none; }
+    .pass-error.show { display: block; }
+
+    /* ============ SİDEBAR ============ */
+    .sidebar {
+      position: fixed;
+      top: calc(106px + env(safe-area-inset-top, 0px)); left: 16px;
+      width: var(--sidebar-w);
+      height: calc(100vh - 130px - env(safe-area-inset-top, 0px));
+      background: var(--surface);
+      backdrop-filter: blur(34px) saturate(180%);
+      -webkit-backdrop-filter: blur(34px) saturate(180%);
+      border: 1px solid var(--border);
+      border-radius: 30px;
+      padding: 24px 16px;
+      transform: translateX(calc(-100% - 30px)) scale(0.96);
+      opacity: 0;
+      transition: all 0.6s cubic-bezier(0.25, 1, 0.4, 1);
+      z-index: 90;
+      overflow-y: auto;
+      box-shadow: var(--shadow-lux), inset 0 1px 0 rgba(255,255,255,0.07);
+      visibility: hidden;
+    }
+    .sidebar.show { transform: none; opacity: 1; visibility: visible; }
+
+    .sidebar-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 14px 18px; margin-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-head h3 {
+      font-family: 'Syne', sans-serif;
+      font-size: 18px; font-weight: 700;
+      color: var(--gold);
+    }
+    .sidebar-head .dot {
+      width: 9px; height: 9px; border-radius: 50%;
+      background: var(--mint);
+      box-shadow: 0 0 12px var(--glow-mint);
+      animation: dotPulse 2s ease-in-out infinite;
+    }
+    @keyframes dotPulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+
+    .cat-item {
+      display: flex; align-items: center; gap: 14px;
+      padding: 11px 14px;
+      border-radius: 20px;
+      margin-bottom: 6px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.35s cubic-bezier(0.25, 1, 0.5, 1);
+      outline: none;
+      position: relative; overflow: hidden;
+    }
+    .cat-item::before {
+      content: '';
+      position: absolute; left: 0; top: 20%; bottom: 20%;
+      width: 3px;
+      background: var(--gold-grad);
+      border-radius: 0 3px 3px 0;
+      transform: scaleY(0);
+      transition: transform 0.35s ease;
+    }
+    .cat-item:hover, .cat-item:focus {
+      background: var(--item-bg);
+      transform: translateX(6px);
+      border-color: var(--border);
+    }
+    .cat-item:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 22px var(--glow-gold);
+    }
+    .cat-item.active {
+      background: linear-gradient(90deg, rgba(230,192,104,0.12), transparent);
+      border-color: var(--border);
+    }
+    .cat-item.active::before { transform: scaleY(1); }
+
+    .cat-ic {
+      width: 40px; height: 40px;
+      border-radius: 14px;
+      display: grid; place-items: center;
+      background: var(--item-bg);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      transition: all 0.35s ease; flex-shrink: 0;
+    }
+    .cat-item.active .cat-ic {
+      background: var(--gold-grad);
+      color: var(--on-gold);
+      border-color: transparent;
+      box-shadow: 0 0 20px var(--glow-gold);
+    }
+    .cat-item:hover .cat-ic { transform: rotate(-8deg) scale(1.08); }
+
+    .cat-label {
+      flex: 1;
+      font-size: 14px; font-weight: 600;
+      color: var(--text-dim);
+      transition: color 0.3s;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .cat-item.active .cat-label { color: var(--text); font-weight: 800; }
+
+    .cat-count {
+      font-size: 11px; font-weight: 800;
+      padding: 4px 11px;
+      border-radius: 22px;
+      background: var(--item-bg);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      transition: all 0.35s; flex-shrink: 0;
+    }
+    .cat-item.active .cat-count { background: var(--gold-grad); color: var(--on-gold); border-color: transparent; }
+
+    .cat-item.adult .cat-ic { background: rgba(255,93,143,0.14); color: var(--rose); border-color: rgba(255,93,143,0.3); }
+    .cat-item.adult.active .cat-ic { background: linear-gradient(135deg, #ff5d8f, #c2185b); color: #fff; box-shadow: 0 0 22px var(--glow-rose); }
+    .cat-item.adult .cat-label { color: var(--rose); }
+    .cat-item.adult.active .cat-label { color: var(--text); }
+
+    .cat-item.m3u .cat-ic { background: rgba(127,227,255,0.1); color: var(--ice); border-color: rgba(127,227,255,0.28); }
+    .cat-item.m3u.active .cat-ic { background: linear-gradient(135deg, #7fe3ff, #3aa8d8); color: #04202b; box-shadow: 0 0 22px var(--glow-ice); }
+
+    .overlay {
+      position: fixed; inset: 0;
+      background: rgba(2, 3, 8, 0.7);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.5s; z-index: 80;
+    }
+    .overlay.show { opacity: 1; pointer-events: all; }
+
+    /* ============ ANA İÇERİK ============ */
+    main {
+      position: relative; z-index: 5;
+      margin-top: calc(118px + env(safe-area-inset-top, 0px));
+      padding: 0 3% 80px;
+      max-width: 1740px;
+      margin-left: auto; margin-right: auto;
+    }
+
+    .page-head {
+      display: flex; align-items: flex-end; justify-content: space-between;
+      gap: 20px; margin-bottom: 34px; flex-wrap: wrap;
+      padding: 0 4px;
+    }
+    .page-title-wrap { display: flex; flex-direction: column; gap: 10px; }
+    .page-kicker {
+      font-size: 13px; font-weight: 700;
+      color: var(--gold);
+      display: flex; align-items: center; gap: 12px;
+    }
+    .page-kicker::before {
+      content: '';
+      width: 34px; height: 2px;
+      background: linear-gradient(90deg, var(--gold), transparent);
+      border-radius: 2px;
+    }
+    .page-title {
+      font-family: 'Syne', sans-serif;
+      font-size: clamp(32px, 5.4vw, 58px);
+      font-weight: 800;
+      letter-spacing: -1.5px;
+      line-height: 1.04;
+      background: linear-gradient(100deg, var(--text) 0%, var(--text) 40%, var(--gold-2) 55%, var(--text) 70%, var(--text) 100%);
+      background-size: 250% auto;
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+      animation: shimmer 9s linear infinite;
+    }
+    .page-badge {
+      font-size: 13px; font-weight: 700;
+      padding: 12px 22px;
+      border-radius: 32px;
+      background: var(--item-bg);
+      border: 1px solid var(--border-gold);
+      color: var(--gold);
+      display: flex; align-items: center; gap: 10px;
+      box-shadow: 0 0 26px rgba(230,192,104,0.1);
+    }
+    .page-badge .badge-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--mint);
+      box-shadow: 0 0 10px var(--glow-mint);
+    }
+
+    /* ============ KART IZGARASI ============ */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(208px, 1fr));
+      gap: 22px;
+    }
+    .grid.list-view { display: flex; flex-direction: column; gap: 12px; }
+    .grid.list-view .card { flex-direction: row; height: 96px; align-items: stretch; }
+    .grid.list-view .card-thumb { width: 170px; height: 100%; aspect-ratio: auto; flex-shrink: 0; }
+    .grid.list-view .card-info { flex: 1; padding: 0 72px 0 26px; justify-content: flex-start; background: none; }
+    .grid.list-view .ch-name { font-size: 18px; flex: 0 1 auto; }
+    .grid.list-view .fav-btn { top: 50%; right: 22px; transform: translateY(-50%); }
+    .grid.list-view .fav-btn:hover, .grid.list-view .fav-btn:focus { transform: translateY(-50%) scale(1.12); }
+    .grid.list-view .play-overlay { display: none; }
+    .grid.list-view .card:hover, .grid.list-view .card:focus { transform: translateX(6px); }
+
+    @media (max-width: 700px) {
+      .grid:not(.list-view) { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+      .grid.list-view .card { height: 80px; }
+      .grid.list-view .card-thumb { width: 130px; }
+      .grid.list-view .ch-name { font-size: 15px; }
+      .grid.list-view .card-info { padding: 0 60px 0 18px; }
+    }
+    @media (max-width: 380px) {
+      .grid:not(.list-view) { grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)); gap: 12px; }
+    }
+
+    @keyframes cardIn {
+      from { opacity: 0; transform: translateY(18px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    .card {
+      position: relative;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      cursor: pointer; outline: none;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      display: flex; flex-direction: column;
+      transition: transform 0.35s cubic-bezier(0.25, 1, 0.4, 1), box-shadow 0.35s, border-color 0.3s;
+      animation: cardIn 0.5s cubic-bezier(0.25, 1, 0.4, 1) both;
+      box-shadow: 0 10px 24px rgba(0,0,0,0.3);
+    }
+    html[data-theme="day"] .card { box-shadow: 0 10px 24px rgba(60,40,0,0.1); }
+    .card::before {
+      content: '';
+      position: absolute; top: 0; left: 12%; right: 12%; height: 1px;
+      background: linear-gradient(90deg, transparent, var(--gold), transparent);
+      opacity: 0.35; z-index: 5;
+      transition: opacity 0.3s;
+    }
+    .card:hover, .card:focus {
+      transform: translateY(-7px) scale(1.025);
+      box-shadow: 0 24px 50px rgba(0,0,0,0.55), 0 0 0 1px var(--gold), 0 0 40px var(--glow-gold);
+      border-color: var(--gold);
+      z-index: 10;
+    }
+    .card:hover::before, .card:focus::before { opacity: 1; }
+
+    .card-thumb {
+      width: 100%;
+      aspect-ratio: 16 / 10;
+      position: relative;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+      transition: background 0.5s ease;
+    }
+    .card-thumb::after {
+      content: '';
+      position: absolute; inset: 0;
+      background: linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 55%);
+      pointer-events: none; z-index: 1;
+    }
+    .channel-logo {
+      width: 64%; height: 64%;
+      object-fit: contain; z-index: 2;
+      filter: drop-shadow(0 6px 14px rgba(0,0,0,0.5));
+      transition: transform 0.4s cubic-bezier(0.25, 1, 0.4, 1);
+    }
+    .card:hover .channel-logo, .card:focus .channel-logo { transform: scale(1.14) translateY(-4px); }
+
+    .thumb-text {
+      font-family: 'Syne', sans-serif;
+      font-size: 30px; font-weight: 800;
+      color: rgba(255,255,255,0.95);
+      letter-spacing: 3px; z-index: 2;
+      text-shadow: 0 6px 20px rgba(0,0,0,0.7);
+    }
+
+    .fav-btn {
+      position: absolute;
+      top: 12px; right: 12px;
+      width: 38px; height: 38px;
+      border-radius: 13px;
+      background: rgba(0,0,0,0.5);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.16);
+      display: grid; place-items: center;
+      color: #fff; font-size: 17px;
+      z-index: 6;
+      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      outline: none; cursor: pointer; line-height: 1;
+    }
+    .fav-btn:hover, .fav-btn:focus {
+      background: rgba(255,93,143,0.3);
+      border-color: var(--rose); color: var(--rose);
+      transform: scale(1.14);
+      box-shadow: 0 0 22px var(--glow-rose);
+    }
+    .fav-btn.active {
+      background: linear-gradient(135deg, var(--rose), #c2185b);
+      color: #fff; border-color: transparent;
+      box-shadow: 0 0 22px var(--glow-rose);
+    }
+
+    .play-overlay {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.45);
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; transition: opacity 0.3s;
+      z-index: 4; pointer-events: none;
+    }
+    .play-icon {
+      width: 58px; height: 58px;
+      border-radius: 50%;
+      background: var(--gold-grad);
+      display: grid; place-items: center;
+      color: #1a1204;
+      transform: scale(0.65);
+      transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+      box-shadow: 0 8px 28px rgba(0,0,0,0.6), 0 0 40px var(--glow-gold);
+    }
+    .play-icon svg { margin-left: 4px; }
+    .card:hover .play-overlay, .card:focus .play-overlay { opacity: 1; }
+    .card:hover .play-icon, .card:focus .play-icon { transform: scale(1); }
+
+    .card-info {
+      padding: 15px 18px 17px;
+      position: relative; z-index: 2;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px;
+      background: linear-gradient(to top, rgba(6,7,13,0.55), transparent);
+    }
+    html[data-theme="day"] .card-info { background: none; }
+    .ch-name {
+      font-size: 15px; font-weight: 700;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      color: var(--text); flex: 1;
+    }
+    .live-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--mint);
+      box-shadow: 0 0 10px var(--glow-mint);
+      flex-shrink: 0;
+      animation: dotPulse 2s ease-in-out infinite;
+    }
+
+    .loading-state {
+      grid-column: 1/-1;
+      text-align: center;
+      padding: 80px 20px;
+      color: var(--text-dim);
+      font-size: 15px;
+      display: flex; flex-direction: column;
+      align-items: center; gap: 20px;
+    }
+    .loader {
+      width: 54px; height: 54px;
+      border-radius: 50%;
+      border: 3px solid var(--border);
+      border-top-color: var(--gold);
+      border-right-color: var(--gold-deep);
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ============ AI SOHBET ============ */
+    .ai-chat-panel {
+      position: fixed;
+      bottom: calc(24px + env(safe-area-inset-bottom, 0px)); right: 24px;
+      width: 384px;
+      max-height: 570px;
+      background: var(--surface);
+      backdrop-filter: blur(38px) saturate(190%);
+      -webkit-backdrop-filter: blur(38px) saturate(190%);
+      border: 1px solid var(--border-gold);
+      border-radius: 28px;
+      box-shadow: 0 30px 80px rgba(0,0,0,0.75), 0 0 60px rgba(230,192,104,0.16);
+      z-index: 9999;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      transform: translateY(110%) scale(0.92);
+      opacity: 0;
+      transition: all 0.55s cubic-bezier(0.34, 1.56, 0.64, 1);
+      pointer-events: none;
+    }
+    .ai-chat-panel.open { transform: none; opacity: 1; pointer-events: all; }
+
+    .ai-chat-header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(135deg, rgba(230,192,104,0.1), rgba(127,227,255,0.04));
+    }
+    .ai-avatar {
+      width: 42px; height: 42px;
+      border-radius: 15px;
+      background: var(--gold-grad);
+      display: grid; place-items: center;
+      font-size: 20px;
+      box-shadow: 0 0 22px var(--glow-gold);
+      flex-shrink: 0;
+    }
+    .ai-header-info { flex: 1; }
+    .ai-header-info h4 {
+      font-family: 'Syne', sans-serif;
+      font-size: 16px; font-weight: 800;
+      color: var(--gold-2);
+    }
+    html[data-theme="day"] .ai-header-info h4 { color: var(--gold-deep); }
+    .ai-header-info p {
+      font-size: 11.5px; color: var(--text-dim);
+      margin-top: 2px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .ai-online-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 8px var(--glow-mint); }
+    .ai-close-btn {
+      width: 36px; height: 36px;
+      border-radius: 12px;
+      background: var(--item-bg);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      display: grid; place-items: center;
+      cursor: pointer; outline: none;
+      transition: all 0.3s; flex-shrink: 0;
+    }
+    .ai-close-btn:hover, .ai-close-btn:focus { border-color: var(--rose); color: var(--rose); box-shadow: 0 0 18px var(--glow-rose); }
+
+    .ai-chat-messages {
+      flex: 1; overflow-y: auto;
+      padding: 18px;
+      display: flex; flex-direction: column; gap: 12px;
+      min-height: 200px; max-height: 340px;
+      scroll-behavior: smooth;
+    }
+    .ai-msg {
+      max-width: 86%;
+      padding: 12px 16px;
+      border-radius: 18px;
+      font-size: 13.5px; line-height: 1.6;
+      animation: msgIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+      word-wrap: break-word;
+      white-space: pre-line;
+    }
+    @keyframes msgIn {
+      from { opacity: 0; transform: translateY(10px) scale(0.96); }
+      to { opacity: 1; transform: none; }
+    }
+    .ai-msg.bot {
+      align-self: flex-start;
+      background: rgba(230,192,104,0.08);
+      border: 1px solid rgba(230,192,104,0.22);
+      border-bottom-left-radius: 6px;
+    }
+    .ai-msg.user {
+      align-self: flex-end;
+      background: rgba(127,227,255,0.09);
+      border: 1px solid rgba(127,227,255,0.24);
+      border-bottom-right-radius: 6px;
+    }
+    .ai-msg .msg-label { font-size: 11px; font-weight: 800; margin-bottom: 5px; opacity: 0.85; }
+    .ai-msg.bot .msg-label { color: var(--gold); }
+    .ai-msg.user .msg-label { color: var(--ice); text-align: right; }
+
+    .ai-typing {
+      display: flex; gap: 5px;
+      padding: 14px 18px;
+      align-self: flex-start;
+      background: rgba(230,192,104,0.08);
+      border: 1px solid rgba(230,192,104,0.22);
+      border-radius: 18px; border-bottom-left-radius: 6px;
+    }
+    .ai-typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--gold); animation: typingBounce 1.4s ease-in-out infinite; }
+    .ai-typing span:nth-child(2) { animation-delay: 0.2s; }
+    .ai-typing span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes typingBounce {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+      30% { transform: translateY(-8px); opacity: 1; }
+    }
+
+    .ai-chat-input-wrap {
+      display: flex; gap: 10px;
+      padding: 16px 18px;
+      border-top: 1px solid var(--border);
+      background: rgba(0,0,0,0.12);
+    }
+    .ai-chat-input {
+      flex: 1; height: 46px;
+      border-radius: 15px;
+      background: var(--item-bg);
+      border: 1px solid var(--border);
+      padding: 0 16px;
+      color: var(--text);
+      font-size: 13.5px; font-family: inherit;
+      outline: none; transition: all 0.3s;
+    }
+    .ai-chat-input::placeholder { color: var(--text-muted); }
+    .ai-chat-input:focus { border-color: var(--gold); box-shadow: 0 0 20px var(--glow-gold); }
+    .ai-send-btn {
+      width: 46px; height: 46px;
+      border-radius: 15px;
+      background: var(--gold-grad);
+      border: none; color: var(--on-gold);
+      display: grid; place-items: center;
+      cursor: pointer; outline: none;
+      transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+      flex-shrink: 0;
+    }
+    .ai-send-btn:hover, .ai-send-btn:focus { transform: scale(1.08) rotate(-5deg); box-shadow: 0 0 28px var(--glow-gold); }
+
+    .ai-quick-actions { display: flex; gap: 8px; padding: 0 18px 14px; flex-wrap: wrap; }
+    .ai-quick-btn {
+      padding: 7px 14px;
+      border-radius: 20px;
+      background: var(--item-bg);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 12px; font-weight: 700;
+      cursor: pointer; outline: none;
+      transition: all 0.3s;
+    }
+    .ai-quick-btn:hover, .ai-quick-btn:focus { border-color: var(--gold); color: var(--gold); box-shadow: 0 0 16px var(--glow-gold); }
+
+    @media (max-width: 480px) {
+      .ai-chat-panel { width: calc(100% - 24px); right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); max-height: 72vh; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<div id="splash">
+  <div class="splash-logo-wrap">
+    <div class="splash-ring"></div>
+    <div class="splash-ring"></div>
+    <div class="splash-ring"></div>
+    <img class="splash-logo" id="splashLogo" src="https://i.hizliresim.com/ppjkoywa.png" alt="Sar Medya">
+    <div class="splash-mono" id="splashMono">S</div>
+  </div>
+  <div class="splash-title">SAR MEDYA</div>
+  <div class="splash-bar"></div>
+</div>
+
+<div class="topbar" role="banner">
+  <button id="menuBtn" tabindex="0" aria-label="Menüyü aç/kapat">
+    <div class="menu-lines" aria-hidden="true"><span></span><span></span><span></span></div>
+  </button>
+
+  <div class="brand">
+    <div class="brand-logo">
+      <img id="brandImg" src="https://i.hizliresim.com/ppjkoywa.png" alt="Sar Medya">
+      <span class="mono" id="brandMono">S</span>
+    </div>
+    <div class="brand-name">SAR MEDYA</div>
+  </div>
+
+  <div class="search-wrap">
+    <svg class="search-ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+    </svg>
+    <input type="text" id="searchInput" placeholder="Kanal ara..." aria-label="Kanal ara" autocomplete="off" tabindex="0">
+  </div>
+
+  <div class="top-actions">
+    <button id="viewToggle" class="icon-btn" tabindex="0" aria-label="Görünümü değiştir">
+      <svg id="viewIcon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></svg>
+    </button>
+    <button id="profileBtn" class="icon-btn profile-btn" tabindex="0" aria-label="Profil">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle>
+      </svg>
+    </button>
+    <button id="aiToggle" class="icon-btn ai-btn" tabindex="0" aria-label="Yapay zeka asistanı">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7z"></path><path d="M9 21h6"></path>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<div class="profile-panel" id="profilePanel">
+  <div class="profile-head">
+    <div class="profile-avatar">👤</div>
+    <div class="profile-info">
+      <h4>Misafir Kullanıcı</h4>
+      <p>Sar Medya Premium</p>
+    </div>
+  </div>
+
+  <button class="theme-toggle-btn" id="profileThemeToggle" type="button">
+    <span>🌙 Gece modu</span>
+    <span class="switch"></span>
+  </button>
+
+  <div class="profile-section-title">Hesap</div>
+
+  <a class="profile-item" id="telegramLink" href="#">
+    <span class="pi-icon">✈️</span>
+    <span class="pi-text">Telegram<small>Kanalımıza katıl</small></span>
+  </a>
+
+  <button class="profile-item" id="profileM3uBtn" type="button">
+    <span class="pi-icon">📡</span>
+    <span class="pi-text">M3U listesi<small>Kendi listeni ekle</small></span>
+  </button>
+
+  <div class="profile-section-title">Uygulama</div>
+
+  <button class="profile-item" id="profileClearFavs" type="button">
+    <span class="pi-icon">❤️</span>
+    <span class="pi-text">Favorileri temizle<small>Tüm favorileri sil</small></span>
+  </button>
+
+  <button class="profile-item" id="profileAboutBtn" type="button">
+    <span class="pi-icon">ℹ️</span>
+    <span class="pi-text">Hakkında<small>Sar Medya sürüm bilgisi</small></span>
+  </button>
+</div>
+
+<aside class="sidebar" id="sidebar" aria-hidden="true" tabindex="-1">
+  <div class="sidebar-head">
+    <h3>Kategoriler</h3>
+    <div class="dot"></div>
+  </div>
+  <div id="catList"></div>
+</aside>
+<div class="overlay" id="overlay" aria-hidden="true" tabindex="-1"></div>
+
+<main>
+  <div class="page-head">
+    <div class="page-title-wrap">
+      <div class="page-kicker">Sar Medya canlı yayın</div>
+      <h1 class="page-title" id="pageTitle">Yükleniyor...</h1>
+    </div>
+    <div class="page-badge" id="pageCount">
+      <span class="badge-dot"></span>
+      <span>0 kanal</span>
+    </div>
+  </div>
+
+  <section class="grid" id="grid" aria-label="Kanal listesi" role="list">
+    <div class="loading-state">
+      <div class="loader"></div>
+      Kanallar yükleniyor...
+    </div>
+  </section>
+</main>
+
+<div class="pass-modal-backdrop" id="passModal">
+  <div class="pass-modal">
+    <div class="pass-modal-title">🔞 Adult bölümü</div>
+    <div class="pass-modal-sub">Bu bölüme girmek için şifre gerekli.</div>
+    <input type="password" class="pass-input" id="passInput" placeholder="••••" maxlength="20" inputmode="numeric" autocomplete="off">
+    <div class="pass-error" id="passError">❌ Yanlış şifre, tekrar dene.</div>
+    <div class="pass-actions">
+      <button class="pass-btn pass-btn-ghost" id="passCancel" type="button">İptal</button>
+      <button class="pass-btn pass-btn-primary" id="passConfirm" type="button">Giriş yap</button>
+    </div>
+  </div>
+</div>
+
+<div class="m3u-modal-backdrop" id="m3uModal">
+  <div class="m3u-modal">
+    <div class="m3u-modal-title">📡 M3U liste yöneticisi</div>
+    <div class="m3u-modal-sub">M3U yayın listenin bağlantısını ekle. Liste cihazında ve Firebase'de saklanır, içerikler otomatik olarak kanal listesine eklenir.</div>
+    <input type="text" class="m3u-input" id="m3uInput" placeholder="https://ornek.com/liste.m3u" autocomplete="off">
+    <div class="m3u-actions">
+      <button class="m3u-btn m3u-btn-ghost" id="m3uCloseBtn" type="button">Kapat</button>
+      <button class="m3u-btn m3u-btn-primary" id="m3uAddBtn" type="button">➕ Listeyi ekle</button>
+    </div>
+    <div class="m3u-list" id="m3uList"></div>
+  </div>
+</div>
+
+<div class="ai-chat-panel" id="aiChatPanel">
+  <div class="ai-chat-header">
+    <div class="ai-avatar">🤖</div>
+    <div class="ai-header-info">
+      <h4>Sar Medya AI</h4>
+      <p><span class="ai-online-dot"></span>Çevrimiçi · Sar Medya uzmanı</p>
+    </div>
+    <button class="ai-close-btn" id="aiCloseBtn" aria-label="Sohbeti kapat" type="button">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+        <line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    </button>
+  </div>
+
+  <div class="ai-chat-messages" id="aiMessages">
+    <div class="ai-msg bot">
+      <div class="msg-label">Sar Medya AI</div>
+      Merhaba! 👋 Ben Sar Medya yapay zeka asistanıyım. Kanallar, yayınlar ve özellikler hakkında her şeyi sorabilirsin.
+    </div>
+  </div>
+
+  <div class="ai-quick-actions">
+    <button class="ai-quick-btn" data-q="Sar Medya nedir?" type="button">Sar Medya nedir?</button>
+    <button class="ai-quick-btn" data-q="Kanalları nasıl izlerim?" type="button">Kanalları nasıl izlerim?</button>
+    <button class="ai-quick-btn" data-q="M3U listesi nedir?" type="button">M3U listesi</button>
+    <button class="ai-quick-btn" data-q="Favorilere nasıl eklerim?" type="button">Favoriler</button>
+  </div>
+
+  <div class="ai-chat-input-wrap">
+    <input type="text" class="ai-chat-input" id="aiInput" placeholder="Bir soru yaz..." autocomplete="off">
+    <button class="ai-send-btn" id="aiSendBtn" aria-label="Gönder" type="button">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+/* ============ AYARLAR ============ */
+const TELEGRAM_URL = "https://t.me/sarmedya";   // Telegram bağlantını buraya yaz
+const APP_VERSION  = "1.0";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyA9iUuAMK4hrqLQEARG-4IjBrOSzaIIDQk",
+  authDomain: "kazan-beab9.firebaseapp.com",
+  databaseURL: "https://kazan-beab9-default-rtdb.firebaseio.com",
+  projectId: "kazan-beab9",
+  storageBucket: "kazan-beab9.appspot.com",
+  messagingSenderId: "278987454292",
+  appId: "1:278987454292:web:7e8400b4e43fd0fb847ac1",
+  measurementId: "G-W6KNZVH324"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+const CATEGORIES_PATH = 'sarmedya-kategoriler';
+const CHANNELS_PATH   = 'sarmedya-kanallar';
+const ADULT_PATH      = 'sarmedya-adult-kanallar';
+const ADULT_PASS_PATH = 'sarmedya-adult-sifre';
+const M3U_FB_PATH     = 'sarmedya-m3u-listeleri';
+
+const ADULT_CAT_ID = '__ADULT__';
+const M3U_CAT_ID   = '__M3U__';
+
+let categories = [];
+let channels = [];
+let firebaseCategories = {};
+let firebaseChannels = {};
+let firebaseAdultChannels = {};
+let adultPassword = '';
+let adultUnlocked = false;
+
+let m3uLists = [];
+let m3uChannels = [];
+
+/* ============ YARDIMCILAR ============ */
+function svg(inner){
+  return '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + inner + '</svg>';
+}
+const favIcon = svg('<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>');
+const adultIcon = svg('<circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>');
+const m3uIcon = svg('<path d="M4 6h16M4 12h16M4 18h10"></path><circle cx="19" cy="18" r="2"></circle>');
+const defaultIcon = svg('<rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect><polyline points="17 2 12 7 7 2"></polyline>');
+
+const iconDictionary = {
+  haber: svg('<path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8l-4 4v14a2 2 0 0 0 2 2z"></path><line x1="14" y1="2" x2="14" y2="8"></line><line x1="14" y1="8" x2="20" y2="8"></line><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line>'),
+  belgesel: svg('<path d="M12 2.69l5.66 4.12A8 8 0 1 1 6.34 6.81L12 2.69z"></path>'),
+  sinema: svg('<rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line>'),
+  spor: svg('<circle cx="12" cy="8" r="7"></circle><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"></polyline>'),
+  cocuk: svg('<circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line>'),
+  muzik: svg('<path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle>'),
+  dini: svg('<path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path>'),
+  ulusal: svg('<circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>')
+};
+
+function getCatSymbol(id, label){
+  if(id === 'favoriler') return favIcon;
+  if(id === ADULT_CAT_ID) return adultIcon;
+  if(id === M3U_CAT_ID) return m3uIcon;
+  const s = (id + label).toLowerCase();
+  if(s.includes('haber')) return iconDictionary.haber;
+  if(s.includes('belgesel') || s.includes('doğa')) return iconDictionary.belgesel;
+  if(s.includes('sinema') || s.includes('film')) return iconDictionary.sinema;
+  if(s.includes('spor') || s.includes('sport')) return iconDictionary.spor;
+  if(s.includes('çocuk') || s.includes('cocuk')) return iconDictionary.cocuk;
+  if(s.includes('müzik') || s.includes('muzik')) return iconDictionary.muzik;
+  if(s.includes('dini') || s.includes('din')) return iconDictionary.dini;
+  if(s.includes('ulusal')) return iconDictionary.ulusal;
+  return defaultIcon;
+}
+
+function slugify(str){
+  return (str||'').toLowerCase()
+    .replace(/ç/g,'c').replace(/ğ/g,'g').replace(/ı/g,'i').replace(/i̇/g,'i')
+    .replace(/ö/g,'o').replace(/ş/g,'s').replace(/ü/g,'u')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function trUpper(s){ return String(s||'').toLocaleUpperCase('tr-TR'); }
+function trLower(s){ return String(s||'').toLocaleLowerCase('tr-TR'); }
+
+const fallbackGradients = [
+  "linear-gradient(135deg, rgba(230, 192, 104, 0.42), rgba(8, 10, 20, 0.96))",
+  "linear-gradient(135deg, rgba(127, 227, 255, 0.34), rgba(8, 10, 20, 0.96))",
+  "linear-gradient(135deg, rgba(255, 93, 143, 0.36), rgba(8, 10, 20, 0.96))",
+  "linear-gradient(135deg, rgba(159, 139, 255, 0.4), rgba(8, 10, 20, 0.96))",
+  "linear-gradient(135deg, rgba(109, 255, 180, 0.3), rgba(8, 10, 20, 0.96))"
+];
+function getFallbackColor(str){
+  let hash = 0;
+  for(let i = 0; i < str.length; i++){ hash = str.charCodeAt(i) + ((hash << 5) - hash); }
+  return fallbackGradients[Math.abs(hash) % fallbackGradients.length];
+}
+
+/* ============ DOM ============ */
+const $ = id => document.getElementById(id);
+const sidebar = $('sidebar'), overlay = $('overlay'), menuBtn = $('menuBtn'), catList = $('catList');
+const grid = $('grid'), pageTitle = $('pageTitle'), pageCount = $('pageCount');
+const viewToggle = $('viewToggle'), viewIcon = $('viewIcon'), searchInput = $('searchInput');
+const passModal = $('passModal'), passInput = $('passInput'), passError = $('passError');
+const profileBtn = $('profileBtn'), profilePanel = $('profilePanel'), profileThemeToggle = $('profileThemeToggle');
+const profileM3uBtn = $('profileM3uBtn'), profileClearFavs = $('profileClearFavs'), profileAboutBtn = $('profileAboutBtn');
+const m3uModal = $('m3uModal'), m3uInput = $('m3uInput'), m3uAddBtn = $('m3uAddBtn'), m3uCloseBtn = $('m3uCloseBtn'), m3uList = $('m3uList');
+const aiToggle = $('aiToggle'), aiChatPanel = $('aiChatPanel'), aiCloseBtn = $('aiCloseBtn');
+const aiMessages = $('aiMessages'), aiInput = $('aiInput'), aiSendBtn = $('aiSendBtn');
+
+$('telegramLink').setAttribute('href', TELEGRAM_URL);
+
+// Logo yüklenemezse monogram göster
+$('splashLogo').addEventListener('error', e => { e.target.style.display = 'none'; $('splashMono').style.display = 'grid'; });
+$('brandImg').addEventListener('error', e => { e.target.style.display = 'none'; $('brandMono').style.display = 'block'; });
+
+let activeCat = '';
+let favorites = [];
+let searchQuery = '';
+let isListView = false;
+let cardNodes = [];
+let currentCardIndex = 0;
+let cardsPerRow = 1;
+let hasInteracted = false;
+let isDataReady = false;
+let aiChatOpen = false;
+let profileOpen = false;
+
+try{
+  const sf = JSON.parse(localStorage.getItem('sarmedya_favs') || '[]');
+  if(Array.isArray(sf)) favorites = sf;
+  if(localStorage.getItem('sarmedya_view') === 'list') isListView = true;
+  const sm3u = JSON.parse(localStorage.getItem('sarmedya_m3u') || '[]');
+  if(Array.isArray(sm3u)) m3uLists = sm3u;
+  const sm3uCh = JSON.parse(localStorage.getItem('sarmedya_m3u_channels') || '[]');
+  if(Array.isArray(sm3uCh)) m3uChannels = sm3uCh;
+}catch(e){ favorites = []; m3uLists = []; m3uChannels = []; }
+
+function saveM3uLocal(){
+  try{
+    localStorage.setItem('sarmedya_m3u', JSON.stringify(m3uLists));
+    localStorage.setItem('sarmedya_m3u_channels', JSON.stringify(m3uChannels));
+  }catch(e){}
+}
+
+/* ============ M3U ============ */
+function parseM3UName(url){
+  try{
+    const u = new URL(url);
+    const parts = u.pathname.split('/').filter(Boolean);
+    if(parts.length){
+      const last = parts[parts.length-1].replace(/\.(m3u8?|txt)$/i,'');
+      if(last) return decodeURIComponent(last);
+    }
+    return u.hostname;
+  }catch(e){ return 'M3U Liste'; }
+}
+
+function parseM3UContent(text){
+  const lines = text.split(/\r?\n/);
+  const out = [];
+  let current = null;
+  for(const raw of lines){
+    const line = raw.trim();
+    if(!line) continue;
+    if(line.startsWith('#EXTINF')){
+      const nameMatch = line.match(/,(.+)$/);
+      const logoMatch = line.match(/tvg-logo="([^"]*)"/i);
+      const groupMatch = line.match(/group-title="([^"]*)"/i);
+      current = {
+        name: nameMatch ? nameMatch[1].trim() : 'Kanal',
+        logo: logoMatch ? logoMatch[1] : '',
+        group: groupMatch ? groupMatch[1] : ''
+      };
+    } else if(/^https?:/i.test(line) && current){
+      current.url = line;
+      out.push(current);
+      current = null;
+    }
+  }
+  return out;
+}
+
+async function fetchM3UContent(url){
+  try{
+    const res = await fetch(url, { mode: 'cors' });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    return parseM3UContent(await res.text());
+  }catch(e){
+    console.warn('M3U fetch failed:', e);
+    return [];
+  }
+}
+
+function toM3uChannels(chs, name, url){
+  return chs.map((c, i) => ({
+    id: 'm3u_' + name.replace(/\s+/g,'_') + '_' + i,
+    title: c.name,
+    logo: c.logo || '',
+    ref: c.url,
+    cat: M3U_CAT_ID,
+    letter: c.name.substring(0,4).toLocaleUpperCase('tr-TR'),
+    isM3u: true,
+    m3uSource: url
+  }));
+}
+
+/* ============ KATEGORİLER ============ */
+function buildCategories(){
+  catList.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  categories.forEach(cat=>{
+    const node = document.createElement('div');
+    node.className = 'cat-item' + (cat.id === activeCat ? ' active' : '') + (cat.isAdult ? ' adult' : '') + (cat.isM3u ? ' m3u' : '');
+    node.dataset.id = cat.id;
+    node.tabIndex = (cat.id === activeCat && sidebar.classList.contains('show')) ? 0 : -1;
+    node.setAttribute('role', 'button');
+
+    const ic = document.createElement('div');
+    ic.className = 'cat-ic';
+    ic.innerHTML = cat.icon;
+    node.appendChild(ic);
+
+    const label = document.createElement('div');
+    label.className = 'cat-label';
+    label.textContent = cat.label;
+    node.appendChild(label);
+
+    let count = 0;
+    if(cat.id === 'favoriler') count = favorites.length;
+    else if(cat.id === ADULT_CAT_ID) count = Object.values(firebaseAdultChannels).filter(c => c && c.name && c.active !== false).length;
+    else if(cat.id === M3U_CAT_ID) count = m3uChannels.length;
+    else count = channels.filter(c => c.cat === cat.id).length;
+
+    const cDiv = document.createElement('div');
+    cDiv.className = 'cat-count';
+    cDiv.textContent = String(count);
+    node.appendChild(cDiv);
+
+    node.addEventListener('click', () => selectCategory(cat.id));
+    node.addEventListener('keydown', e=>{
+      if(isEnterKey(e)) selectCategory(cat.id);
+      if(isRightKey(e) && sidebar.classList.contains('show')){
+        e.preventDefault();
+        closeSidebar();
+        if(cardNodes.length) focusCard(0);
+      }
+    });
+    frag.appendChild(node);
+  });
+  catList.appendChild(frag);
+}
+
+function selectCategory(catId){
+  if(catId === ADULT_CAT_ID && !adultUnlocked){
+    openPassModal();
+    return;
+  }
+  searchInput.value = '';
+  searchQuery = '';
+  activeCat = catId;
+  const cat = categories.find(c => c.id === catId);
+  pageTitle.textContent = cat ? cat.label : '';
+
+  document.querySelectorAll('.cat-item').forEach(el=>{
+    const isActive = el.dataset.id === activeCat;
+    el.classList.toggle('active', isActive);
+    el.tabIndex = isActive ? 0 : -1;
+  });
+
+  if(document.activeElement) document.activeElement.blur();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  renderGrid();
+  closeSidebar();
+
+  if(cardNodes.length && hasInteracted){ setTimeout(()=>focusCard(0), 10); }
+}
+
+/* ============ KARTLAR ============ */
+function computeCardsPerRow(){
+  cardNodes = Array.from(grid.querySelectorAll('.card'));
+  if(cardNodes.length === 0){ cardsPerRow = 1; return; }
+  if(isListView){ cardsPerRow = 1; return; }
+  const firstTop = cardNodes[0].offsetTop;
+  let count = 0;
+  for(const c of cardNodes){
+    if(Math.abs(c.offsetTop - firstTop) < 5) count++; else break;
+  }
+  cardsPerRow = count || 1;
+}
+
+function focusCard(index){
+  if(!cardNodes.length) return;
+  if(index < 0) index = 0;
+  if(index >= cardNodes.length) index = cardNodes.length - 1;
+  currentCardIndex = index;
+  const el = cardNodes[currentCardIndex];
+  if(el){
+    hasInteracted = true;
+    el.focus({ preventScroll: true });
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+}
+
+searchInput.addEventListener('input', e=>{
+  searchQuery = trLower(e.target.value).trim();
+  renderGrid();
+});
+
+function openChannel(ch){
+  if(ch.ref) window.location.href = ch.ref;
+}
+
+function createCard(ch, index){
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.tabIndex = 0;
+  card.setAttribute('role', 'listitem');
+  card.setAttribute('aria-label', ch.title);
+  card.style.animationDelay = (Math.min(index, 30) * 0.025) + 's';
+
+  const thumb = document.createElement('div');
+  thumb.className = 'card-thumb';
+  thumb.style.background = getFallbackColor((ch.id || '') + ch.title);
+
+  const letterEl = () => {
+    const t = document.createElement('div');
+    t.className = 'thumb-text';
+    t.textContent = ch.letter || '';
+    return t;
+  };
+
+  if(ch.logo){
+    const img = document.createElement('img');
+    img.className = 'channel-logo';
+    img.src = ch.logo;
+    img.alt = ch.title;
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.addEventListener('error', () => { img.remove(); thumb.insertBefore(letterEl(), thumb.firstChild); });
+    thumb.appendChild(img);
+  } else {
+    thumb.appendChild(letterEl());
+  }
+
+  const po = document.createElement('div');
+  po.className = 'play-overlay';
+  po.innerHTML = '<div class="play-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg></div>';
+  thumb.appendChild(po);
+  card.appendChild(thumb);
+
+  // Logodan baskın rengi al
+  if(ch.logo){
+    const ghost = new Image();
+    ghost.crossOrigin = 'Anonymous';
+    ghost.onload = () => {
+      try{
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 40; canvas.height = 40;
+        ctx.drawImage(ghost, 0, 0, 40, 40);
+        const data = ctx.getImageData(0, 0, 40, 40).data;
+        let r = 0, g = 0, b = 0, c = 0;
+        for(let i = 0; i < data.length; i += 16){
+          if(data[i+3] > 128 && (data[i] > 30 || data[i+1] > 30 || data[i+2] > 30)){
+            r += data[i]; g += data[i+1]; b += data[i+2]; c++;
+          }
+        }
+        if(c > 0){
+          r = Math.floor(r/c); g = Math.floor(g/c); b = Math.floor(b/c);
+          thumb.style.background = 'linear-gradient(135deg, rgba(' + r + ',' + g + ',' + b + ',0.6), rgba(8, 10, 20, 0.96))';
+        }
+      }catch(err){}
+    };
+    ghost.src = ch.logo;
+  }
+
+  const favBtn = document.createElement('button');
+  favBtn.type = 'button';
+  favBtn.className = 'fav-btn' + (favorites.includes(ch.id) ? ' active' : '');
+  favBtn.textContent = favorites.includes(ch.id) ? '♥' : '♡';
+  favBtn.tabIndex = -1;
+  favBtn.setAttribute('aria-label', 'Favorilere ekle');
+  card.appendChild(favBtn);
+
+  const info = document.createElement('div');
+  info.className = 'card-info';
+  const nm = document.createElement('div');
+  nm.className = 'ch-name';
+  nm.textContent = ch.title;
+  const dot = document.createElement('div');
+  dot.className = 'live-dot';
+  info.appendChild(nm);
+  info.appendChild(dot);
+  card.appendChild(info);
+
+  favBtn.addEventListener('click', e=>{
+    e.stopPropagation();
+    toggleFav(ch.id);
+    favBtn.classList.toggle('active');
+    favBtn.textContent = favorites.includes(ch.id) ? '♥' : '♡';
+    if(activeCat === 'favoriler' && !searchQuery){
+      if(document.activeElement) document.activeElement.blur();
+      renderGrid();
+      setTimeout(()=>focusCard(currentCardIndex), 10);
+    } else {
+      const favCat = catList.querySelector('.cat-item[data-id="favoriler"] .cat-count');
+      if(favCat) favCat.textContent = String(favorites.length);
+    }
+  });
+
+  card.addEventListener('click', () => openChannel(ch));
+  card.addEventListener('keydown', e=>{ if(isEnterKey(e)) openChannel(ch); });
+  card.addEventListener('focus', ()=>{
+    const idx = cardNodes.indexOf(card);
+    if(idx !== -1) currentCardIndex = idx;
+  });
+
+  return card;
+}
+
+function renderGrid(){
+  let list = [];
+
+  if(searchQuery){
+    const allCh = [...channels, ...m3uChannels];
+    list = allCh.filter(ch => trLower(ch.title).includes(searchQuery));
+    pageTitle.textContent = 'Arama sonuçları';
+  } else if(activeCat === ADULT_CAT_ID){
+    if(adultUnlocked){
+      list = Object.entries(firebaseAdultChannels)
+        .map(([k, v]) => ({ fbKey: k, ...v }))
+        .filter(c => c && c.name && c.active !== false)
+        .sort((a, b) => (a.order || 0) - (b.order || 0))
+        .map(c => ({
+          id: c.fbKey,
+          title: c.name,
+          logo: c.logo || '',
+          ref: c.url || '',
+          cat: ADULT_CAT_ID,
+          letter: trUpper(c.name.substring(0, 4))
+        }));
+    }
+    pageTitle.textContent = 'ADULT';
+  } else if(activeCat === M3U_CAT_ID){
+    list = m3uChannels;
+    pageTitle.textContent = 'M3U İÇERİKLERİ';
+  } else {
+    list = activeCat === 'favoriler'
+      ? [...channels, ...m3uChannels].filter(ch => favorites.includes(ch.id))
+      : channels.filter(ch => ch.cat === activeCat);
+    const cat = categories.find(c => c.id === activeCat);
+    pageTitle.textContent = cat ? cat.label : 'Kanallar';
+  }
+
+  const countEl = pageCount.querySelector('span:last-child');
+  if(countEl) countEl.textContent = list.length + ' kanal';
+
+  while(grid.firstChild) grid.removeChild(grid.firstChild);
+
+  if(list.length === 0){
+    const msg = document.createElement('div');
+    msg.className = 'loading-state';
+    msg.textContent = searchQuery
+      ? 'Aramana uygun kanal bulunamadı. Farklı bir kelime dene.'
+      : (activeCat === M3U_CAT_ID
+          ? 'Henüz M3U içeriği yok. Profil menüsünden bir liste ekleyebilirsin.'
+          : 'Bu kategoride henüz kanal yok.');
+    grid.appendChild(msg);
+    cardNodes = [];
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  list.forEach((ch, index) => frag.appendChild(createCard(ch, index)));
+  grid.appendChild(frag);
+
+  requestAnimationFrame(()=>{
+    cardNodes = Array.from(grid.querySelectorAll('.card'));
+    computeCardsPerRow();
+  });
+}
+
+function toggleFav(id){
+  if(favorites.includes(id)) favorites = favorites.filter(x => x !== id);
+  else favorites.push(id);
+  try{ localStorage.setItem('sarmedya_favs', JSON.stringify(favorites)); }catch(e){}
+}
+
+/* ============ SIDEBAR ============ */
+function openSidebar(){
+  closeProfilePanel();
+  sidebar.classList.add('show');
+  overlay.classList.add('show');
+  sidebar.setAttribute('aria-hidden', 'false');
+  overlay.setAttribute('aria-hidden', 'false');
+  menuBtn.classList.add('active');
+  setTimeout(()=>{
+    const activeEl = catList.querySelector('.cat-item.active') || catList.querySelector('.cat-item');
+    if(activeEl) activeEl.focus();
+  }, 0);
+}
+function closeSidebar(){
+  sidebar.classList.remove('show');
+  overlay.classList.remove('show');
+  sidebar.setAttribute('aria-hidden', 'true');
+  overlay.setAttribute('aria-hidden', 'true');
+  menuBtn.classList.remove('active');
+}
+menuBtn.addEventListener('click', e=>{
+  e.stopPropagation();
+  sidebar.classList.contains('show') ? closeSidebar() : openSidebar();
+});
+overlay.addEventListener('click', e=>{ e.stopPropagation(); closeSidebar(); });
+
+/* ============ PROFİL ============ */
+function openProfilePanel(){
+  closeSidebar();
+  profilePanel.classList.add('show');
+  profileOpen = true;
+  updateProfileThemeUI();
+}
+function closeProfilePanel(){
+  profilePanel.classList.remove('show');
+  profileOpen = false;
+}
+profileBtn.addEventListener('click', e=>{
+  e.stopPropagation();
+  profileOpen ? closeProfilePanel() : openProfilePanel();
+});
+document.addEventListener('click', e=>{
+  if(profileOpen && !profilePanel.contains(e.target) && e.target !== profileBtn && !profileBtn.contains(e.target)){
+    closeProfilePanel();
+  }
+});
+profilePanel.addEventListener('click', e => e.stopPropagation());
+
+function updateProfileThemeUI(){
+  const cur = document.documentElement.getAttribute('data-theme') || 'night';
+  const label = profileThemeToggle.querySelector('span:first-child');
+  if(label) label.textContent = cur === 'day' ? '☀️ Gündüz modu' : '🌙 Gece modu';
+}
+profileThemeToggle.addEventListener('click', ()=>{
+  const cur = document.documentElement.getAttribute('data-theme') || 'night';
+  setTheme(cur === 'day' ? 'night' : 'day');
+});
+
+profileM3uBtn.addEventListener('click', ()=>{ closeProfilePanel(); openM3uModal(); });
+
+profileClearFavs.addEventListener('click', ()=>{
+  if(confirm('Tüm favoriler silinsin mi?')){
+    favorites = [];
+    try{ localStorage.setItem('sarmedya_favs', '[]'); }catch(e){}
+    const favCat = catList.querySelector('.cat-item[data-id="favoriler"] .cat-count');
+    if(favCat) favCat.textContent = '0';
+    if(activeCat === 'favoriler') renderGrid();
+    closeProfilePanel();
+  }
+});
+
+profileAboutBtn.addEventListener('click', ()=>{
+  alert("SAR MEDYA\n\nDijital Canlı TV Platformu\nSürüm: " + APP_VERSION + "\n\n© 2026 Sar Medya\nTüm hakları saklıdır.");
+});
+
+/* ============ M3U MODAL ============ */
+function openM3uModal(){
+  closeProfilePanel();
+  m3uModal.classList.add('show');
+  m3uInput.value = '';
+  renderM3uList();
+  setTimeout(()=>m3uInput.focus(), 200);
+}
+function closeM3uModal(){ m3uModal.classList.remove('show'); }
+
+m3uCloseBtn.addEventListener('click', closeM3uModal);
+m3uModal.addEventListener('click', e=>{ if(e.target === m3uModal) closeM3uModal(); });
+m3uAddBtn.addEventListener('click', addM3uList);
+m3uInput.addEventListener('keydown', e=>{
+  if(e.key === 'Enter'){ e.preventDefault(); addM3uList(); }
+});
+
+async function loadM3uSource(entry){
+  const chs = await fetchM3UContent(entry.url);
+  if(chs.length > 0){
+    m3uChannels = m3uChannels.filter(c => c.m3uSource !== entry.url).concat(toM3uChannels(chs, entry.name, entry.url));
+    saveM3uLocal();
+    updateM3uCount();
+    if(activeCat === M3U_CAT_ID) renderGrid();
+  }
+  return chs.length;
+}
+
+async function addM3uList(){
+  const url = m3uInput.value.trim();
+  if(!url){ alert('Lütfen bir M3U bağlantısı gir.'); return; }
+  if(!/^https?:\/\//i.test(url)){ alert('Geçerli bir http veya https bağlantısı gir.'); return; }
+  if(m3uLists.some(m => m.url === url)){ alert('Bu liste zaten ekli.'); return; }
+
+  const name = parseM3UName(url);
+  const entry = { url, name, addedAt: Date.now() };
+
+  m3uLists.push(entry);
+  saveM3uLocal();
+  m3uInput.value = '';
+  renderM3uList();
+  updateM3uCount();
+
+  try{
+    const key = 'm3u_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    await set(ref(db, M3U_FB_PATH + '/' + key), entry);
+  }catch(e){ console.warn('Firebase m3u sync failed:', e); }
+
+  showM3uLoading();
+  const n = await loadM3uSource(entry);
+  renderM3uList();
+
+  if(n > 0){
+    alert('✅ ' + n + ' kanal eklendi.\n\nSol menüdeki "M3U İÇERİKLERİ" kategorisinden izleyebilirsin.');
+    closeM3uModal();
+  } else {
+    alert('⚠️ Liste kaydedildi ama içerik alınamadı.\n\nNedeni CORS engeli veya bağlantı sorunu olabilir. Başka bir ağdan tekrar deneyebilirsin.');
+  }
+}
+
+function showM3uLoading(){
+  m3uList.innerHTML = '<div class="m3u-empty" style="color:var(--gold)">⏳ M3U içeriği yükleniyor...</div>';
+}
+
+function renderM3uList(){
+  m3uList.innerHTML = '';
+  if(m3uLists.length === 0){
+    m3uList.innerHTML = '<div class="m3u-empty">Henüz M3U listesi eklenmemiş.</div>';
+    return;
+  }
+  m3uLists.forEach((m, idx)=>{
+    const chCount = m3uChannels.filter(c => c.m3uSource === m.url).length;
+    const shortUrl = (m.url || '').substring(0, 40) + ((m.url || '').length > 40 ? '...' : '');
+
+    const entry = document.createElement('div');
+    entry.className = 'm3u-entry';
+    entry.innerHTML =
+      '<div class="m3u-entry-icon">📡</div>' +
+      '<div class="m3u-entry-info">' +
+        '<div class="m3u-entry-url">' + esc(m.name || 'M3U Liste') + '</div>' +
+        '<div class="m3u-entry-meta">' + chCount + ' kanal · ' + esc(shortUrl) + '</div>' +
+      '</div>' +
+      '<button class="m3u-entry-btn refresh" type="button" aria-label="Yenile">↻</button>' +
+      '<button class="m3u-entry-btn del" type="button" aria-label="Sil">🗑️</button>';
+
+    entry.querySelector('.refresh').addEventListener('click', async ()=>{
+      showM3uLoading();
+      await loadM3uSource(m);
+      renderM3uList();
+    });
+    entry.querySelector('.del').addEventListener('click', ()=>removeM3u(idx));
+    m3uList.appendChild(entry);
+  });
+}
+
+function removeM3u(idx){
+  if(!confirm("Bu M3U listesi silinsin mi?\n\n(Not: Firebase'de yedek olarak saklanmaya devam eder.)")) return;
+  const removed = m3uLists[idx];
+  m3uLists.splice(idx, 1);
+  if(removed) m3uChannels = m3uChannels.filter(c => c.m3uSource !== removed.url);
+  saveM3uLocal();
+  renderM3uList();
+  updateM3uCount();
+  if(activeCat === M3U_CAT_ID) renderGrid();
+}
+
+function updateM3uCount(){
+  const cnt = catList.querySelector('.cat-item[data-id="' + M3U_CAT_ID + '"] .cat-count');
+  if(cnt) cnt.textContent = String(m3uChannels.length);
+}
+
+// Firebase'den M3U listelerini çek ve birleştir
+onValue(ref(db, M3U_FB_PATH), snap=>{
+  const data = snap.val() || {};
+  const fbList = Object.values(data).filter(x => x && x.url);
+  if(fbList.length === 0) return;
+  let changed = false;
+  fbList.forEach(fb=>{
+    if(!m3uLists.find(m => m.url === fb.url)){
+      m3uLists.push({ url: fb.url, name: fb.name || parseM3UName(fb.url), addedAt: fb.addedAt || Date.now() });
+      changed = true;
+    }
+  });
+  if(changed){
+    saveM3uLocal();
+    renderM3uList();
+    updateM3uCount();
+    if(activeCat === M3U_CAT_ID) renderGrid();
+  }
+});
+
+/* ============ KUMANDA / KLAVYE ============ */
+function isLeftKey(e)  { return e.key === 'ArrowLeft'  || e.key === 'Left'  || e.keyCode === 37 || e.keyCode === 21; }
+function isRightKey(e) { return e.key === 'ArrowRight' || e.key === 'Right' || e.keyCode === 39 || e.keyCode === 22; }
+function isUpKey(e)    { return e.key === 'ArrowUp'    || e.key === 'Up'    || e.keyCode === 38 || e.keyCode === 19; }
+function isDownKey(e)  { return e.key === 'ArrowDown'  || e.key === 'Down'  || e.keyCode === 40 || e.keyCode === 20; }
+function isBackKey(e)  { return e.key === 'Escape' || e.key === 'Backspace' || e.keyCode === 8 || e.keyCode === 27 || e.keyCode === 4; }
+function isEnterKey(e) { return e.key === 'Enter' || e.keyCode === 13 || e.keyCode === 23 || e.keyCode === 66; }
+
+document.addEventListener('keydown', function(e){
+
+  if(m3uModal.classList.contains('show')){
+    if(isBackKey(e) && document.activeElement !== m3uInput){ e.preventDefault(); closeM3uModal(); return; }
+    if(e.key === 'Escape'){ e.preventDefault(); closeM3uModal(); }
+    return;
+  }
+
+  if(passModal.classList.contains('show')){
+    if(isBackKey(e) && document.activeElement !== passInput){ e.preventDefault(); closePassModal(); return; }
+    if(e.key === 'Escape'){ e.preventDefault(); closePassModal(); return; }
+    if(isEnterKey(e) && document.activeElement !== passInput){ e.preventDefault(); tryPass(); return; }
+    return;
+  }
+
+  const active = document.activeElement;
+
+  // AI sohbet yazarken kumanda tuşlarına karışma
+  if(active === aiInput){
+    if(e.key === 'Escape'){ toggleAIChat(false); aiToggle.focus(); }
+    return;
+  }
+
+  if(active === searchInput){
+    if(isLeftKey(e) || isRightKey(e) || isBackKey(e)) return;
+    if(isDownKey(e) || isEnterKey(e)){
+      e.preventDefault();
+      if(cardNodes.length) focusCard(0);
+      return;
+    }
+  }
+
+  if(!hasInteracted && (isUpKey(e) || isDownKey(e) || isLeftKey(e) || isRightKey(e) || isEnterKey(e))){
+    hasInteracted = true;
+    if(sidebar.classList.contains('show')){
+      const activeCatEl = catList.querySelector('.cat-item.active');
+      if(activeCatEl) activeCatEl.focus();
+    } else if(cardNodes.length > 0){
+      focusCard(0);
+    }
+  }
+
+  const isCard = active && active.classList.contains('card');
+  const isCat = active && active.classList.contains('cat-item');
+  const isTopBar = active === menuBtn || active === searchInput || active === viewToggle || active === profileBtn || active === aiToggle;
+
+  if(sidebar.classList.contains('show') && isCat){
+    const cats = Array.from(catList.querySelectorAll('.cat-item'));
+    const i = cats.indexOf(active);
+
+    if(isDownKey(e)){ e.preventDefault(); if(i < cats.length - 1) cats[i+1].focus(); return; }
+    if(isUpKey(e)){ e.preventDefault(); if(i > 0) cats[i-1].focus(); else menuBtn.focus(); return; }
+    if(isBackKey(e) || isLeftKey(e)){
+      e.preventDefault();
+      closeSidebar();
+      if(cardNodes.length) focusCard(currentCardIndex);
+      return;
+    }
+    if(isRightKey(e)){ e.preventDefault(); selectCategory(active.dataset.id); return; }
+  }
+
+  if(isCard){
+    e.preventDefault();
+
+    if(isUpKey(e)){
+      if(currentCardIndex < cardsPerRow){
+        if(currentCardIndex > cardsPerRow / 2) searchInput.focus();
+        else menuBtn.focus();
+        return;
+      }
+      focusCard(currentCardIndex - cardsPerRow);
+      return;
+    }
+    if(isDownKey(e)){ focusCard(currentCardIndex + cardsPerRow); return; }
+    if(isLeftKey(e)){
+      if(currentCardIndex % cardsPerRow === 0) openSidebar();
+      else focusCard(currentCardIndex - 1);
+      return;
+    }
+    if(isRightKey(e)){
+      if(isListView) return;
+      if(currentCardIndex < cardNodes.length - 1) focusCard(currentCardIndex + 1);
+      return;
+    }
+    if(isEnterKey(e)){ active.click(); return; }
+  }
+
+  const topOrder = [menuBtn, searchInput, viewToggle, profileBtn, aiToggle];
+  if(isTopBar){
+    const i = topOrder.indexOf(active);
+    if(isRightKey(e)){ e.preventDefault(); if(i < topOrder.length - 1) topOrder[i+1].focus(); return; }
+    if(isLeftKey(e)){ e.preventDefault(); if(i > 0) topOrder[i-1].focus(); return; }
+    if(isDownKey(e)){
+      e.preventDefault();
+      if(active === menuBtn && sidebar.classList.contains('show')){
+        const activeCatEl = catList.querySelector('.cat-item.active') || catList.querySelector('.cat-item');
+        if(activeCatEl) activeCatEl.focus();
+      } else if(cardNodes.length){
+        focusCard(0);
+      }
+      return;
+    }
+    if(isEnterKey(e)){
+      if(active !== searchInput){ e.preventDefault(); active.click(); }
+      return;
+    }
+  }
+
+  if(isBackKey(e)){
+    if(aiChatOpen){ e.preventDefault(); toggleAIChat(false); return; }
+    if(profileOpen){ e.preventDefault(); closeProfilePanel(); return; }
+    if(sidebar.classList.contains('show')){
+      e.preventDefault();
+      closeSidebar();
+      if(cardNodes.length) focusCard(currentCardIndex);
+      else menuBtn.focus();
+      return;
+    }
+  }
+});
+
+/* ============ ADULT ŞİFRE ============ */
+function openPassModal(){
+  closeSidebar();
+  closeProfilePanel();
+  passModal.classList.add('show');
+  passError.classList.remove('show');
+  passInput.value = '';
+  setTimeout(()=>passInput.focus(), 100);
+}
+function closePassModal(){
+  passModal.classList.remove('show');
+  passError.classList.remove('show');
+}
+function tryPass(){
+  const val = passInput.value.trim();
+  if(!adultPassword){
+    passError.textContent = '❌ Adult şifresi henüz ayarlanmamış.';
+    passError.classList.add('show');
+    return;
+  }
+  if(val === String(adultPassword)){
+    adultUnlocked = true;
+    closePassModal();
+    activeCat = ADULT_CAT_ID;
+    const cat = categories.find(c => c.id === ADULT_CAT_ID);
+    pageTitle.textContent = cat ? cat.label : 'ADULT';
+    document.querySelectorAll('.cat-item').forEach(el=>{
+      el.classList.toggle('active', el.dataset.id === activeCat);
+    });
+    renderGrid();
+  } else {
+    passError.textContent = '❌ Yanlış şifre, tekrar dene.';
+    passError.classList.add('show');
+    passInput.value = '';
+    passInput.focus();
+  }
+}
+$('passConfirm').addEventListener('click', tryPass);
+$('passCancel').addEventListener('click', closePassModal);
+passInput.addEventListener('keydown', e=>{
+  if(e.key === 'Enter' || e.keyCode === 13){ e.preventDefault(); tryPass(); }
+});
+
+/* ============ TEMA / GÖRÜNÜM ============ */
+function setTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.setAttribute('content', t === 'day' ? '#f3efe6' : '#06070d');
+  try{ localStorage.setItem('sarmedya_theme', t); }catch(e){}
+  updateProfileThemeUI();
+}
+
+const LIST_ICON = '<line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line>';
+const GRID_ICON = '<rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect>';
+
+function applyViewMode(isList){
+  isListView = isList;
+  grid.classList.toggle('list-view', isListView);
+  viewIcon.innerHTML = isListView ? GRID_ICON : LIST_ICON;
+  try{ localStorage.setItem('sarmedya_view', isListView ? 'list' : 'grid'); }catch(e){}
+  computeCardsPerRow();
+}
+viewToggle.addEventListener('click', ()=>{
+  applyViewMode(!isListView);
+  if(cardNodes.length && currentCardIndex > -1) focusCard(currentCardIndex);
+});
+
+/* ============ AI SOHBET ============ */
+function toggleAIChat(forceState){
+  const open = (typeof forceState === 'boolean') ? forceState : !aiChatOpen;
+  aiChatOpen = open;
+  aiChatPanel.classList.toggle('open', open);
+  if(open){
+    closeProfilePanel();
+    setTimeout(()=>aiInput.focus(), 200);
+  }
+}
+aiToggle.addEventListener('click', ()=>toggleAIChat());
+aiCloseBtn.addEventListener('click', ()=>toggleAIChat(false));
+
+function addAIMessage(text, sender){
+  const msg = document.createElement('div');
+  msg.className = 'ai-msg ' + sender;
+  const label = document.createElement('div');
+  label.className = 'msg-label';
+  label.textContent = sender === 'bot' ? 'Sar Medya AI' : 'Sen';
+  msg.appendChild(label);
+  msg.appendChild(document.createTextNode(text));
+  aiMessages.appendChild(msg);
+  aiMessages.scrollTop = aiMessages.scrollHeight;
+}
+function showTypingIndicator(){
+  const typing = document.createElement('div');
+  typing.className = 'ai-typing';
+  typing.id = 'aiTypingIndicator';
+  typing.innerHTML = '<span></span><span></span><span></span>';
+  aiMessages.appendChild(typing);
+  aiMessages.scrollTop = aiMessages.scrollHeight;
+}
+function removeTypingIndicator(){
+  const el = $('aiTypingIndicator');
+  if(el) el.remove();
+}
+
+const aiResponses = {
+  nedir: "Sar Medya, canlı TV kanallarını tek yerde toplayan modern bir yayın platformudur. 🎬 Şık arayüzü, geniş kanal listesi ve M3U desteğiyle öne çıkar.",
+  izle: "Kanalları izlemek çok kolay! 📺 Sol menüden bir kategori seç ya da arama çubuğunu kullan, ardından kanal kartına tıkla.",
+  favori: "Favorilere eklemek için kanal kartının sağ üstündeki kalp simgesine tıkla. ❤️ Hepsini sol menüdeki FAVORİLER kategorisinde bulursun.",
+  m3u: "M3U listesi, IPTV yayınlarını içeren bir bağlantı dosyasıdır. 📡 Profil menüsünden \"M3U listesi\" seçeneğiyle kendi listeni ekleyebilirsin. İçerikler \"M3U İÇERİKLERİ\" kategorisinde görünür.",
+  profil: "Profil menüsüne üst bardaki 👤 simgesinden ulaşabilirsin. Tema, M3U listesi, favoriler ve daha fazlası orada.",
+  adult: "Adult bölümünün şifresi güvenlik nedeniyle paylaşılamaz. 🔒",
+  tema: "Temayı değiştirmek için profil menüsündeki gece/gündüz düğmesine dokun. 🌙☀️",
+  telegram: "Telegram kanalımıza katılmak için profil menüsündeki ✈️ Telegram seçeneğine tıkla.",
+  yardim: "Şunları sorabilirsin:\n• Sar Medya nedir?\n• Kanalları nasıl izlerim?\n• M3U listesi nedir?\n• Favorilere nasıl eklerim?",
+  merhaba: "Merhaba! 👋 Sar Medya AI asistanına hoş geldin. Sana nasıl yardımcı olabilirim?",
+  tesekkur: "Rica ederim! 😊 Başka bir sorun olursa buradayım.",
+  ucretsiz: "Sar Medya'yı kullanmak için herhangi bir ücret ödemen gerekmez. 🎉",
+  varsayilan: "Bu konuda yardımcı olmak isterim! 🤖 Daha belirli bir soru sorabilirsin. Örneğin: \"Sar Medya nedir?\", \"M3U listesi nedir?\" ya da \"Favorilere nasıl eklerim?\""
+};
+
+function getAIResponse(userText){
+  const l = trLower(userText).trim();
+  if(l.includes('m3u')) return aiResponses.m3u;
+  if(l.includes('profil')) return aiResponses.profil;
+  if(l.includes('sar medya') || l.includes('sarmedya')) return aiResponses.nedir;
+  if(l.includes('kanal') && (l.includes('izle'))) return aiResponses.izle;
+  if(l.includes('favori') || l.includes('kalp')) return aiResponses.favori;
+  if(l.includes('adult') || l.includes('şifre') || l.includes('sifre')) return aiResponses.adult;
+  if(l.includes('tema') || l.includes('gece') || l.includes('gündüz')) return aiResponses.tema;
+  if(l.includes('telegram')) return aiResponses.telegram;
+  if(l.includes('merhaba') || l.includes('selam')) return aiResponses.merhaba;
+  if(l.includes('teşekkür') || l.includes('sağ ol') || l.includes('sag ol')) return aiResponses.tesekkur;
+  if(l.includes('ücretsiz') || l.includes('bedava')) return aiResponses.ucretsiz;
+  if(l.includes('yardım') || l.includes('nasıl')) return aiResponses.yardim;
+  return aiResponses.varsayilan;
+}
+
+function askAI(text){
+  addAIMessage(text, 'user');
+  showTypingIndicator();
+  setTimeout(()=>{
+    removeTypingIndicator();
+    addAIMessage(getAIResponse(text), 'bot');
+  }, 400 + Math.random() * 500);
+}
+
+function sendAIMessage(){
+  const text = aiInput.value.trim();
+  if(!text) return;
+  aiInput.value = '';
+  askAI(text);
+}
+aiSendBtn.addEventListener('click', sendAIMessage);
+aiInput.addEventListener('keydown', e=>{
+  if(e.key === 'Enter' || e.keyCode === 13){ e.preventDefault(); sendAIMessage(); }
+});
+document.querySelectorAll('.ai-quick-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{ if(btn.dataset.q) askAI(btn.dataset.q); });
+});
+
+/* ============ FIREBASE VERİSİ ============ */
+function buildDataFromFirebase(){
+  const cats = [];
+  cats.push({ id: M3U_CAT_ID, label: 'M3U İÇERİKLERİ', icon: m3uIcon, isM3u: true });
+  cats.push({ id: 'favoriler', label: 'FAVORİLER', icon: favIcon });
+
+  const fbCatArray = Object.entries(firebaseCategories)
+    .map(([key, val]) => ({ fbKey: key, ...val }))
+    .filter(c => c && c.name && c.active !== false)
+    .sort((a, b) => {
+      const ao = (a.order !== undefined) ? a.order : 999999;
+      const bo = (b.order !== undefined) ? b.order : 999999;
+      return ao - bo;
+    });
+
+  fbCatArray.forEach(c=>{
+    const catId = slugify(c.name);
+    cats.push({ id: catId, label: trUpper(c.name), icon: getCatSymbol(catId, c.name) });
+  });
+
+  const adultActive = Object.values(firebaseAdultChannels).filter(c => c && c.name && c.active !== false).length;
+  if(adultActive > 0){
+    cats.push({ id: ADULT_CAT_ID, label: 'ADULT', icon: adultIcon, isAdult: true });
+  }
+  categories = cats;
+
+  const chs = [];
+  Object.entries(firebaseChannels).forEach(([key, val])=>{
+    if(!val || !val.name) return;
+    if(val.active === false) return;
+    const chCatId = slugify(val.category || '');
+    if(!fbCatArray.find(c => slugify(c.name) === chCatId)) return;
+
+    chs.push({
+      id: key,
+      title: val.name,
+      logo: val.logo || '',
+      ref: val.url || '',
+      cat: chCatId,
+      catLabel: val.category || '',
+      letter: trUpper(val.name.substring(0, 4)),
+      order: (val.order !== undefined) ? val.order : 999999,
+      createdAt: val.createdAt || 0
+    });
+  });
+
+  chs.sort((a, b)=>{
+    if(a.order !== b.order) return a.order - b.order;
+    return b.createdAt - a.createdAt;
+  });
+  channels = chs;
+
+  buildCategories();
+
+  if(!categories.find(c => c.id === activeCat)){
+    const firstReal = categories.find(c => c.id !== 'favoriler' && c.id !== ADULT_CAT_ID && c.id !== M3U_CAT_ID);
+    activeCat = firstReal ? firstReal.id : M3U_CAT_ID;
+  }
+  renderGrid();
+}
+
+onValue(ref(db, CATEGORIES_PATH), snapshot=>{
+  firebaseCategories = snapshot.val() || {};
+  isDataReady = true;
+  buildDataFromFirebase();
+});
+onValue(ref(db, CHANNELS_PATH), snapshot=>{
+  firebaseChannels = snapshot.val() || {};
+  isDataReady = true;
+  buildDataFromFirebase();
+});
+onValue(ref(db, ADULT_PATH), snapshot=>{
+  firebaseAdultChannels = snapshot.val() || {};
+  buildDataFromFirebase();
+});
+onValue(ref(db, ADULT_PASS_PATH), snapshot=>{
+  adultPassword = snapshot.val() || '';
+  adultUnlocked = false;
+  buildCategories();
+});
+
+/* ============ AÇILIŞ ============ */
+window.addEventListener('load', ()=>{
+  setTimeout(()=>{
+    const splash = $('splash');
+    if(splash) splash.classList.add('hidden');
+  }, 2200);
+});
+
+(function init(){
+  let savedTheme = 'night';
+  try{ savedTheme = localStorage.getItem('sarmedya_theme') || 'night'; }catch(e){}
+  setTheme(savedTheme);
+  applyViewMode(isListView);
+
+  setTimeout(()=>{
+    if(!isDataReady){
+      grid.innerHTML = '<div class="loading-state">Veri yüklenemedi. İnternet bağlantını kontrol edip sayfayı yenile.</div>';
+    }
+  }, 6000);
+})();
+</script>
+
+</body>
+</html>
